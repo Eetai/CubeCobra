@@ -78,20 +78,19 @@ const nonIntersect = (list1, list2) => list1.filter((x) => !list2.includes(x));
 const getPlayerPicks = async (draftId, seat) => lrange(userPicksRef(draftId, seat), 0, -1);
 const getPlayerTrash = async (draftId, seat) => lrange(userTrashRef(draftId, seat), 0, -1);
 
-const obtainLock = async (draftId, random, timeout = 10000) => {
-  await set(`draft:${draftId}:lock`, random, 'NX', 'PX', timeout);
+const obtainLock = async (draftId, lockText, timeout = 10000) =>
+  await set(`draft:${draftId}:lock`, lockText, 'NX', 'PX', timeout);
+
+const doesLockExist = async (draftId, lockText) => {
   const value = await get(`draft:${draftId}:lock`);
-  if (value === random) {
+  if (value === lockText) {
     return true;
   }
   return false;
 };
 
-const releaseLock = async (draftId, random) => {
-  const value = await get(`draft:${draftId}:lock`);
-  if (value === random) {
-    await del(`draft:${draftId}:lock`);
-  }
+const releaseLock = async (draftId) => {
+  await del(`draft:${draftId}:lock`);
 };
 
 const getDraftMetaData = async (draftId) => {
@@ -308,7 +307,7 @@ const buildBotDeck = (picks, draft) => {
 
 const finishDraft = async (draftId) => {
   // ensure this is only called once
-  const lock = await obtainLock(`finishdraft:${draftId}`, uuid(), 30000);
+  const lock = await obtainLock(`finishdraft:${draftId}`, 'locked', 30000);
 
   if (!lock) {
     return;
@@ -534,11 +533,17 @@ const getDraftPick = async (draftId, seat) => {
 };
 
 const tryBotPicks = async (draftId) => {
+  const lockExists = await doesLockExist(draftId, 'locked');
+  console.log('im lockexists', lockExists);
+  if (lockExists) return;
+  await obtainLock(draftId, 'locked');
+
   const { currentPack, seats, totalPacks } = await getDraftMetaData(draftId);
   const finished = await hget(draftRef(draftId), 'finished');
   let picks = 0;
   if (finished === 'true') {
-    return {result:'done', picks};
+    await releaseLock(draftId);
+    return { result: 'done', picks };
   }
 
   const passDirection = currentPack % 2 === 0 ? 1 : -1;
@@ -561,17 +566,18 @@ const tryBotPicks = async (draftId) => {
       }
     }
   }
+  await releaseLock(draftId);
 
   if (await isPackDone(draftId)) {
     if (currentPack < totalPacks) {
       await openPack(draftId);
-      return {result: 'inProgress', picks};
+      return { result: 'inProgress', picks };
     }
     // draft is done
     await finishDraft(draftId);
-    return {result: 'done', picks};
+    return { result: 'done', picks };
   }
-  return {result: 'inProgress', picks};
+  return { result: 'inProgress', picks };
 };
 
 const dumpDraft = async (draftId) => {
