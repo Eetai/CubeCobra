@@ -85,6 +85,14 @@ router.post('/startdraft', ensureAuth, async (req, res) => {
 });
 
 router.post('/draftpick', ensureAuth, async (req, res) => {
+  function returnFalseSometimes() {
+    const randomNumber = Math.random();
+    return randomNumber < 0.25;
+  }
+  if (!returnFalseSometimes()) {
+    return;
+  }
+
   const { draft, pick } = req.body;
 
   const seat = parseInt(req.body.seat, 10);
@@ -104,12 +112,12 @@ router.post('/draftpick', ensureAuth, async (req, res) => {
 router.post('/trybotpicks', ensureAuth, async (req, res) => {
   const { draft } = req.body;
 
-  const {result, picks} = await tryBotPicks(draft);
+  const { result, picks } = await tryBotPicks(draft);
 
   return res.status(200).send({
     success: 'true',
     result,
-    picks
+    picks,
   });
 });
 
