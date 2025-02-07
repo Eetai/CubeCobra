@@ -35,32 +35,43 @@ const CardGrid: React.FC<CardGridProps> = ({
         const wasSelected = cardIndex === selectedIndex;
         const rating = ratings?.[cardIndex];
         
+        const getRatingStyle = () => {
+          if (isHighestRated && wasSelected) return "bg-[#087715]/95"; // Changed from green-500
+          if (isHighestRated) return "bg-[#007BFF]/95"; // Changed from blue-500
+          if (wasSelected) return "bg-[#E6B800]/95"; // Changed from FCF8A9 to a darker yellow
+          return "bg-gray-700/80";
+        };
+        
         return (
           <Col key={cardIndex} xs={1} className="relative">
-            <div className={classNames(
-              "relative",
-              {
-                // Apply multiple borders if both conditions are true
-                "ring-2 ring-red-500 ring-offset-2 rounded-sm": isHighestRated && !wasSelected,
-                "ring-2 ring-blue-500 ring-offset-2 rounded-sm": wasSelected && !isHighestRated,
-                "ring-4 ring-purple-500 ring-offset-2 rounded-sm": isHighestRated && wasSelected,
-              }
-            )}>
-              <FoilCardImage
-                card={card}
-                autocard
-                onClick={() => onClick?.(card, cardIndex)}
-                className={onClick ? 'cursor-pointer hover:opacity-80' : undefined}
-                {...cardProps}
-              />
-              {rating !== undefined && (
-                <div className={classNames(
-                  "text-center py-1",
-                  { "font-bold text-red-600": isHighestRated }
-                )}>
-                  {Math.round(rating * 100)}%
-                </div>
-              )}
+            <div className="relative">
+              <div className={classNames(
+                "relative",
+                {
+                  "ring-[5px] ring-[#007BFF] ring-offset-0 rounded-lg": isHighestRated && !wasSelected,
+                  "ring-[5px] ring-[#E6B800] ring-offset-0 rounded-lg": wasSelected && !isHighestRated,
+                  "ring-[5px] ring-[#087715] ring-offset-0 rounded-lg": isHighestRated && wasSelected,
+                }
+              )}>
+                <FoilCardImage
+                  card={card}
+                  autocard
+                  onClick={() => onClick?.(card, cardIndex)}
+                  className={onClick ? 'cursor-pointer hover:opacity-80' : undefined}
+                  {...cardProps}
+                />
+                {rating !== undefined && (
+                  <div className={classNames(
+                    "absolute bottom-2 left-1/2 transform -translate-x-1/2",
+                    "px-2 py-0.5 text-center min-w-[2.5rem]",
+                    "text-sm font-semibold text-white",
+                    "rounded-md shadow-sm backdrop-blur-[2px]",
+                    getRatingStyle()
+                  )}>
+                    {Math.round(rating * 100)}%
+                  </div>
+                )}
+              </div>
             </div>
           </Col>
         );

@@ -2,7 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 
 import Deck from '../../datatypes/Draft';
 import { getDrafterState } from '../../util/draftutil';
+import useLocalStorage from '../hooks/useLocalStorage';
 import useQueryParam from '../hooks/useQueryParam';
+import { Card, CardBody } from './base/Card';
 import { Col, Flexbox, Row } from './base/Layout';
 import Text from './base/Text';
 import CardGrid from './card/CardGrid';
@@ -27,14 +29,8 @@ const CubeCobraBreakdown: React.FC<BreakdownProps> = ({ draft, seatNumber, pickN
   const { cardsInPack, pick = 0, pack, picksList } = drafterState;
   const [ratings, setRatings] = useState<number[]>([]);
   const [pickScores, setPickScores] = useState<{[key: string]: number}>({});
+  const [showRatings, setShowRatings] = useLocalStorage(`showDraftRatings-${draft.id}`, true);
 
-  // Debug logging to help track the issue
-  console.log('Draft State:', {
-    pack,
-    pick,
-    picksList,
-    currentPackCards: cardsInPack.map(idx => draft.cards[idx].details?.name),
-  });
 
   // Get the actual pick that was made in this pack
   const currentPackPicks = picksList[pack ?? 0] ?? [];
@@ -43,53 +39,41 @@ const CubeCobraBreakdown: React.FC<BreakdownProps> = ({ draft, seatNumber, pickN
     cardIdx => cardIdx === currentPickData?.cardIndex
   );
 
-  console.log('Pick Data:', {
-    currentPickData,
-    actualPickIndex,
-    pickedCard: actualPickIndex !== -1 ? draft.cards[cardsInPack[actualPickIndex]]?.details?.name : 'none'
-  });
+  // Create a stable key for the current pick
+  const pickKey = useMemo(() => `${pack}-${pick}`, [pack, pick]);
 
-  // Calculate total score
-  const totalScore = useMemo(() => {
-    const scores = Object.values(pickScores);
-    if (scores.length === 0) return 0;
-    return Math.round(scores.reduce((sum, score) => sum + score, 0));
-  }, [pickScores]);
-
-  // Format data for batchpredict and make API call
   useEffect(() => {
     const fetchPredictions = async () => {
-      // Get all picks made so far
-      const allPicks: number[] = [];
-      for (let packIndex = 0; packIndex <= (pack || 0); packIndex++) {
-        const packPicks = picksList[packIndex] || [];
-        const picksToInclude = packIndex === pack ? pick - 1 : packPicks.length;
-        for (let i = 0; i < picksToInclude; i++) {
-          if (packPicks[i]?.cardIndex !== undefined) {
-            allPicks.push(packPicks[i].cardIndex);
-          }
-        }
-      }
-
-      const input = {
-        inputs: [{
-          pack: cardsInPack.map(idx => draft.cards[idx]?.details?.oracle_id).filter(Boolean),
-          picks: allPicks.map(idx => draft.cards[idx]?.details?.oracle_id).filter(Boolean)
-        }]
-      };
+      if (!cardsInPack.length) return;
+      // Skip if we already have a score for this pick
+      if (pickScores[pickKey] !== undefined) return;
 
       try {
-        const response = await fetch('/api/draftbots/batchpredict', {
+        const allPicks: number[] = [];
+        for (let packIndex = 0; packIndex <= (pack || 0); packIndex++) {
+          const packPicks = picksList[packIndex] || [];
+          const picksToInclude = packIndex === pack ? pick - 1 : packPicks.length;
+          for (let i = 0; i < picksToInclude; i++) {
+            if (packPicks[i]?.cardIndex !== undefined) {
+              allPicks.push(packPicks[i].cardIndex);
+            }
+          }
+        }
+
+        const response = await fetch(`/api/draftbots/predict`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(input)
+          body: JSON.stringify({
+            pack: cardsInPack.map(idx => draft.cards[idx]?.details?.oracle_id).filter(Boolean),
+            picks: allPicks.map(idx => draft.cards[idx]?.details?.oracle_id).filter(Boolean)
+          })
         });
 
         if (response.ok) {
           const data = await response.json();
           // Map predictions to ratings array matching card positions
           const newRatings = new Array(cardsInPack.length).fill(0);
-          data.prediction[0].forEach((pred: { oracle: string; rating: number }) => {
+          data.prediction.forEach((pred: { oracle: string; rating: number }) => {
             const cardIndex = cardsInPack.findIndex(
               idx => draft.cards[idx].details?.oracle_id === pred.oracle
             );
@@ -117,47 +101,54 @@ const CubeCobraBreakdown: React.FC<BreakdownProps> = ({ draft, seatNumber, pickN
       }
     };
 
-    if (cardsInPack.length > 0) {
-      fetchPredictions();
-    }
-  }, [draft.cards, cardsInPack, pack, pick, picksList, actualPickIndex]);
+    fetchPredictions();
+  }, [draft.cards, cardsInPack, pickKey, actualPickIndex, pack, pick, pickScores, picksList]); // Simplified dependencies
 
   return (
     <>
-      <Row className="mb-3">
-        <Col xs={12}>
-          <Text lg semibold>
-            Draft Score: {totalScore} 
-            <span className="text-sm text-gray-600 ml-2">
-              (0 = perfect, negative = suboptimal picks)
-            </span>
-          </Text>
-        </Col>
-      </Row>
+      <Card className="mb-3">
+        <CardBody className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="showRatings"
+            checked={showRatings}
+            onChange={(e) => setShowRatings(e.target.checked)}
+          />
+          <label htmlFor="showRatings">
+            <Text>Show CubeCobra Pick Recommendation</Text>
+          </label>
+        </CardBody>
+      </Card>
       <Row>
         <Col xs={6} sm={4} lg={3} xl={2}>
-          <Text semibold lg>
-            Pick Order
-          </Text>
+          <Text semibold lg>Pick Order</Text>
           <Flexbox direction="col" gap="2">
             {picksList
               .filter((list) => list.length > 0)
-              .map((list, listindex) => (
-                <CardListGroup
-                  cards={list.map(({ cardIndex }) => draft.cards[cardIndex])}
-                  heading={`Pack ${listindex + 1}`}
-                  key={listindex}
-                  onClick={(index) => {
-                    let picks = 0;
-                    for (let i = 0; i < listindex; i++) {
-                      if (draft.InitialState !== undefined) {
-                        picks += draft.InitialState[0][i].cards.length;
-                      }
-                    }
-                    setPickNumber((picks + index).toString());
-                  }}
-                />
-              ))}
+              .map((list, listindex) => {
+                // Calculate base pick number for this pack
+                let basePick = 0;
+                for (let i = 0; i < listindex; i++) {
+                  if (draft.InitialState?.[0]?.[i]?.cards?.length) {
+                    basePick += draft.InitialState[0][i].cards.length;
+                  }
+                }
+                
+                // Calculate which pick in this pack should be bold
+                const currentPickNum = parseInt(pickNumber);
+                const pickInThisPack = currentPickNum >= basePick && currentPickNum < basePick + list.length ? 
+                  currentPickNum - basePick : -1;
+
+                return (
+                  <CardListGroup
+                    cards={list.map(({ cardIndex }) => draft.cards[cardIndex])}
+                    heading={`Pack ${listindex + 1}`}
+                    key={listindex}
+                    selectedIndex={pickInThisPack}
+                    onClick={(index) => setPickNumber((basePick + index).toString())}
+                  />
+                );
+              })}
           </Flexbox>
         </Col>
         <Col xs={6} sm={8} lg={9} xl={10}>
@@ -170,7 +161,7 @@ const CubeCobraBreakdown: React.FC<BreakdownProps> = ({ draft, seatNumber, pickN
             xl={6}
             cards={cardsInPack.map((cardIndex) => draft.cards[cardIndex])}
             hrefFn={(card) => `/tool/card/${card?.details?.scryfall_id}`}
-            ratings={ratings}
+            ratings={showRatings ? ratings : undefined}
             selectedIndex={actualPickIndex}
           />
         </Col>
@@ -275,6 +266,8 @@ interface DecksPickBreakdownProps {
   draft: Deck;
   seatNumber: number;
   defaultIndex?: string;
+  currentPickNumber?: string;
+  basePickNumber?: string;
 }
 
 const DecksPickBreakdown: React.FC<DecksPickBreakdownProps> = ({ draft, seatNumber, defaultIndex = '0' }) => {
