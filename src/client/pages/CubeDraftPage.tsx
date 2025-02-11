@@ -4,7 +4,8 @@ import { DndContext } from '@dnd-kit/core';
 import type { PredictResponse } from 'src/router/routes/api/draftbots/batchpredict.ts';
 import type { State } from 'src/router/routes/draft/finish.ts';
 
-import { Card } from 'components/base/Card';
+import { Card, CardBody } from 'components/base/Card';
+import Text from 'components/base/Text';
 import DeckStacks from 'components/DeckStacks';
 import Pack from 'components/Pack';
 import RenderToRoot from 'components/RenderToRoot';
@@ -59,6 +60,8 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
   const [loading, setLoading] = useState(false);
   const [dragStartTime, setDragStartTime] = useState<number | null>(null);
   const { csrfFetch } = useContext(CSRFContext);
+  const [currentPackRatings, setCurrentPackRatings] = useState<number[]>([]);
+  const [showRatings, setShowRatings] = useLocalStorage(`showRatings-${draft.id}`, true);
 
   const getLocationReferences = useCallback(
     (type: location): { board: any[][][]; setter: React.Dispatch<React.SetStateAction<any[][][]>> } => {
@@ -384,6 +387,61 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
     }
   }, [selectCardByIndex, loading, state.stepQueue, state.seats]);
 
+  // Add effect to fetch ratings whenever the pack changes
+  useEffect(() => {
+    const fetchRatings = async () => {
+      if (!state.seats[0].pack.length) return;
+
+      // Create a map of oracle_id -> card index for the current pack
+      const packCardsById = new Map(
+        state.seats[0].pack.map((index, position) => [
+          draft.cards[index].details?.oracle_id,
+          position
+        ])
+      );
+
+      const response = await fetch(`/api/draftbots/batchpredict`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          inputs: [{
+            pack: state.seats[0].pack.map(index => draft.cards[index].details?.oracle_id),
+            picks: state.seats[0].picks.map(index => draft.cards[index].details?.oracle_id)
+          }]
+        })
+      });
+
+      if (response.ok) {
+        const json = await response.json();
+        // Initialize ratings array with the same length as the pack
+        const ratings = new Array(state.seats[0].pack.length).fill(0);
+        
+        // Map each prediction to its correct position in the pack
+        json.prediction[0].forEach((pred: { oracle: string, rating: number }) => {
+          const packIndex = packCardsById.get(pred.oracle);
+          if (packIndex !== undefined) {
+            ratings[packIndex] = pred.rating;
+          }
+        });
+
+        setCurrentPackRatings(ratings);
+        
+        // Debug output
+        console.log('Pack Ratings:', {
+          cards: state.seats[0].pack.map((index, i) => ({
+            name: draft.cards[index].details?.name,
+            oracle_id: draft.cards[index].details?.oracle_id,
+            rating: ratings[i]
+          }))
+        });
+      }
+    };
+
+    fetchRatings();
+  }, [state.seats[0].pack, state.seats[0].picks, draft.cards]);
+
   const packTitle: string = useMemo(() => {
     const nextStep = state.stepQueue[0];
 
@@ -417,12 +475,26 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
     <MainLayout loginCallback={loginCallback}>
       <DisplayContextProvider cubeID={cube.id}>
         <CubeLayout cube={cube} activeLink="playtest">
+          <Card className="mb-3">
+            <CardBody className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="showRatings"
+                checked={showRatings}
+                onChange={(e) => setShowRatings(e.target.checked)}
+              />
+              <label htmlFor="showRatings">
+                <Text>Show Pick Recommendations</Text>
+              </label>
+            </CardBody>
+          </Card>
           <DndContext onDragEnd={onMoveCard} onDragStart={() => setDragStartTime(Date.now())}>
             <Pack
               pack={state.seats[0].pack.map((index) => draft.cards[index])}
               loading={loading}
               title={packTitle}
               disabled={disabled}
+              ratings={showRatings ? currentPackRatings : undefined}
             />
             <Card className="my-3">
               <DeckStacks

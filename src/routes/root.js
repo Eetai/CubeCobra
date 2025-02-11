@@ -632,4 +632,15 @@ router.get('/ads.txt', (req, res) => {
   redirect(req, res, 301, 'https://api.nitropay.com/v1/ads-860.txt');
 });
 
+router.get('*', async (req, res) => {
+  // Force patron status in development
+  const patron = process.env.NODE_ENV !== 'production' ? true : req.user?.roles?.includes('Patron');
+
+  res.render('main', {
+    // ...existing props...
+    patron,
+    // ...existing props...
+  });
+});
+
 module.exports = router;
