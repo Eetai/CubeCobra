@@ -36,9 +36,9 @@ const CardGrid: React.FC<CardGridProps> = ({
         const rating = ratings?.[cardIndex];
         
         const getRatingStyle = () => {
-          if (isHighestRated && wasSelected) return "bg-[#087715]/95";
-          if (isHighestRated) return "bg-[#007BFF]/95";
-          if (wasSelected) return "bg-[#E6B800]/95";
+          if (isHighestRated && wasSelected) return "bg-[#087715]/95"; // Changed from green-500
+          if (isHighestRated) return "bg-[#007BFF]/95"; // Changed from blue-500
+          if (wasSelected) return "bg-[#E6B800]/95"; // Changed from FCF8A9 to a darker yellow
           return "bg-gray-700/80";
         };
         
