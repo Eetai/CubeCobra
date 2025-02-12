@@ -63,7 +63,9 @@ const DraftBreakdownDisplay: React.FC<DraftBreakdownDisplayProps> = ({
                 heading={`Pack ${listindex + 1}`}
                 key={listindex}
                 selectedIndex={listindex === packNumber ? pickNumber - 1 : undefined}
-                onClick={(index) => onPickClick(listindex, index)}
+                onClick={(index) => { 
+                  onPickClick(listindex, index);
+                }}
               />
             ))}
           </Flexbox>

@@ -37,30 +37,40 @@ const CubeBreakdown: React.FC<BreakdownProps> = ({ draft, seatNumber, pickNumber
       const draftPicksList = [];
       let subList = [];
       let draftCardsInPack: number[] = [];
+      let currentPack = 0;
+      const pickNum = parseInt(pickNumber);
+
+      // Calculate pick number within current pack
       let currentPick = 0;
-      let currentPack = 1;
-
+      let totalPicks = 0;
+      
       for (let i = 0; i < log.length; i++) {
-        subList.push(log[i].pick);
-        if (i === log.length - 1 || log[i].booster.length < log[i + 1].booster.length) {
-          draftPicksList.push(subList.map(cardIndex => ({ cardIndex })));
+        subList.push({ cardIndex: log[i].pick });
+        
+        if (i === log.length - 1 || (i + 1 < log.length && log[i].booster.length < log[i + 1].booster.length)) {
+          draftPicksList.push([...subList]);
+          
+          if (totalPicks <= pickNum && totalPicks + subList.length > pickNum) {
+            currentPick = pickNum - totalPicks + 1;
+          }
+          
+          totalPicks += subList.length;
           subList = [];
-
-          if (i < parseInt(pickNumber)) {
+          
+          if (totalPicks <= pickNum) {
             currentPack += 1;
           }
         }
 
-        if (i === parseInt(pickNumber)) {
+        if (i === pickNum) {
           draftCardsInPack = log[i].booster;
-          currentPick = log[i].pick;
         }
       }
 
       return {
         cardsInPack: draftCardsInPack.map(index => ({ cardIndex: index })),
         pick: currentPick,
-        pack: currentPack - 1,
+        pack: currentPack,
         picksList: draftPicksList
       };
     }
@@ -82,7 +92,6 @@ const CubeBreakdown: React.FC<BreakdownProps> = ({ draft, seatNumber, pickNumber
   const actualPickIndex = cardsInPack.findIndex(
     item => item.cardIndex === (currentPickData ? currentPickData.cardIndex : undefined)
   );
-
   // Create a stable key for the current pick
   const pickKey = useMemo(() => `${pack}-${pick}`, [pack, pick]);
 
@@ -147,165 +156,27 @@ const CubeBreakdown: React.FC<BreakdownProps> = ({ draft, seatNumber, pickNumber
     fetchPredictions();
   }, [draft.cards, cardsInPack, pickKey, actualPickIndex, pack, pick, pickScores, picksList]);
 
-<<<<<<< HEAD
-  return (
-    <>
-      <Card className="mb-3">
-        <CardBody className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            id="showRatings"
-            checked={showRatings}
-            onChange={(e) => setShowRatings(e.target.checked)}
-          />
-          <label htmlFor="showRatings">
-            <Text>Show CubeCobra Pick Recommendation</Text>
-          </label>
-        </CardBody>
-      </Card>
-      <Row>
-        <Col xs={6} sm={4} lg={3} xl={2}>
-          <Text semibold lg>Pick Order</Text>
-          <Flexbox direction="col" gap="2">
-            {picksList
-              .filter((list) => list.length > 0)
-              .map((list, listindex) => {
-                // Calculate base pick number for this pack
-                let basePick = 0;
-                for (let i = 0; i < listindex; i++) {
-                  if (draft.InitialState?.[0]?.[i]?.cards?.length) {
-                    basePick += draft.InitialState[0][i].cards.length;
-                  }
-                }
-                
-                // Calculate which pick in this pack should be bold
-                const currentPickNum = parseInt(pickNumber);
-                const pickInThisPack = currentPickNum >= basePick && currentPickNum < basePick + list.length ? 
-                  currentPickNum - basePick : -1;
-
-                return (
-                  <CardListGroup
-                    cards={list.map(({ cardIndex }) => draft.cards[cardIndex])}
-                    heading={`Pack ${listindex + 1}`}
-                    key={listindex}
-                    selectedIndex={pickInThisPack}
-                    onClick={(index) => setPickNumber((basePick + index).toString())}
-                  />
-                );
-              })}
-          </Flexbox>
-        </Col>
-        <Col xs={6} sm={8} lg={9} xl={10}>
-          <Text semibold lg>{`Pack ${(pack || 0) + 1}: Pick ${pick}`}</Text>
-          <CardGrid
-            xs={2}
-            sm={3}
-            md={4}
-            lg={5}
-            xl={6}
-            cards={cardsInPack.map((cardIndex) => draft.cards[cardIndex])}
-            hrefFn={(card) => `/tool/card/${card?.details?.scryfall_id}`}
-            ratings={showRatings ? ratings : undefined}
-            selectedIndex={actualPickIndex}
-          />
-        </Col>
-      </Row>
-    </>
-  );
-};
-
-const DraftmancerBreakdown: React.FC<BreakdownProps> = ({ draft, seatNumber, pickNumber, setPickNumber }) => {
-  const { cardsInPack, pick, pack, picksList } = useMemo(() => {
-    const log = draft.DraftmancerLog?.players[seatNumber];
-
-    if (!log) {
-      return {
-        cardsInPack: [],
-        pick: 0,
-        pack: 0,
-        picksList: [],
-      };
-    }
-
-    const picksList = [];
-    let subList = [];
-    let cardsInPack: number[] = [];
-    //The pick number within the pack, for the overall pick matching pickNumber
-    let pick: number = 1;
-    //Track the pick number within the pack as we traverse the overall picks, since Draftmancer doesn't segment into packs unlike CubeCobra
-    let currentPackPick: number = 0;
-    //The pack currently within
-    let pack = 1;
-
-    for (let i = 0; i < log.length; i++) {
-      currentPackPick += 1;
-      subList.push(log[i].pick);
-      // if this is the last pack, or the next item is a new pack
-      if (i === log.length - 1 || log[i].booster.length < log[i + 1].booster.length) {
-        picksList.push(subList);
-        subList = [];
-
-        if (i < parseInt(pickNumber)) {
-          pack += 1;
-          currentPackPick = 0;
+  const onPickClick = (packIndex: number, pickIndex: number) => {
+    if (draft.DraftmancerLog) {
+      // For Draftmancer drafts, calculate total picks before this pack
+      let picks = 0;
+      for (let i = 0; i < packIndex; i++) {
+        picks += picksList[i].length;
+      }
+      setPickNumber((picks + pickIndex).toString());
+    } else {
+      // Original CubeCobra draft calculation
+      let picks = 0;
+      for (let i = 0; i < packIndex; i++) {
+        if (draft.InitialState?.[0]?.[i]?.cards?.length) {
+          picks += draft.InitialState[0][i].cards.length;
         }
       }
-
-      if (i === parseInt(pickNumber)) {
-        cardsInPack = log[i].booster;
-        pick = currentPackPick;
-=======
-  const onPickClick = (packIndex: number, pickIndex: number) => {
-    let picks = 0;
-    for (let i = 0; i < packIndex; i++) {
-      if (draft.InitialState?.[0]?.[i]?.cards?.length) {
-        picks += draft.InitialState[0][i].cards.length;
->>>>>>> 9598f667 (wip with draftmancer overhaul)
-      }
+      setPickNumber((picks + pickIndex).toString());
     }
-    setPickNumber((picks + pickIndex).toString());
   };
 
   return (
-<<<<<<< HEAD
-    <Row>
-      <Col xs={6} sm={4} lg={3} xl={2}>
-        <Text semibold lg>
-          Pick Order
-        </Text>
-        <Flexbox direction="col" gap="2">
-          {picksList
-            .filter((list) => list.length > 0)
-            .map((list, listindex) => (
-              <CardListGroup
-                cards={list.map((cardIndex) => draft.cards[cardIndex])}
-                heading={`Pack ${listindex + 1}`}
-                key={listindex}
-                onClick={(index) => {
-                  let picks = 0;
-                  for (let i = 0; i < listindex; i++) {
-                    picks += picksList[i].length;
-                  }
-                  setPickNumber((picks + index).toString());
-                }}
-              />
-            ))}
-        </Flexbox>
-      </Col>
-      <Col xs={6} sm={8} lg={9} xl={10}>
-        <Text semibold lg>{`Pack ${pack || 0}: Pick ${pick}`}</Text>
-        <CardGrid
-          xs={2}
-          sm={3}
-          md={4}
-          lg={5}
-          xl={6}
-          cards={cardsInPack.map((cardIndex) => draft.cards[cardIndex])}
-          hrefFn={(card) => `/tool/card/${card?.details?.scryfall_id}`}
-        />
-      </Col>
-    </Row>
-=======
     <DraftBreakdownDisplay
       showRatings={showRatings}
       setShowRatings={setShowRatings}
@@ -318,7 +189,6 @@ const DraftmancerBreakdown: React.FC<BreakdownProps> = ({ draft, seatNumber, pic
       cards={draft.cards}
       onPickClick={onPickClick}
     />
->>>>>>> 9598f667 (wip with draftmancer overhaul)
   );
 };
 
