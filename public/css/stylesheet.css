@@ -758,6 +758,10 @@ video {
   bottom: 0.5rem;
 }
 
+.bottom-\[5\%\] {
+  bottom: 5%;
+}
+
 .bottom-full {
   bottom: 100%;
 }
@@ -954,6 +958,10 @@ video {
 
 .me-0 {
   margin-inline-end: 0px;
+}
+
+.me-1 {
+  margin-inline-end: 0.25rem;
 }
 
 .me-2 {
@@ -2067,6 +2075,11 @@ video {
   padding-bottom: 1.5rem;
 }
 
+.py-\[2px\] {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
 .py-\[3px\] {
   padding-top: 3px;
   padding-bottom: 3px;
@@ -2234,6 +2247,10 @@ video {
 
 .italic {
   font-style: italic;
+}
+
+.tracking-tight {
+  letter-spacing: -0.025em;
 }
 
 .text-bg {
