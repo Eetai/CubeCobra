@@ -1,5 +1,3 @@
-import { arraysEqual } from 'utils/Util';
-
 export type location = 'pack' | 'picks' | 'deck' | 'sideboard';
 
 export const locations: { [key: string]: location } = {
@@ -8,7 +6,8 @@ export const locations: { [key: string]: location } = {
   sideboard: 'sideboard',
 };
 
-class DraftLocation {
+// Make sure the equality comparison in DraftLocation works correctly
+export default class DraftLocation {
   type: location;
   row: number;
   col: number;
@@ -37,24 +36,17 @@ class DraftLocation {
     return new DraftLocation('sideboard', row, col, index);
   }
 
-  equals(other: DraftLocation) {
-    if (this.type !== other.type) {
-      return false;
-    }
-
-    if (this.type === 'pack') {
-      return this.index === other.index;
-    }
-
-    return arraysEqual([this.row, this.col, this.index], [other.row, other.col, other.index]);
+  equals(other: DraftLocation): boolean {
+    return (
+      this.type === other.type &&
+      this.row === other.row &&
+      this.col === other.col &&
+      this.index === other.index
+    );
   }
 
-  toString() {
-    if (this.type === 'pack') {
-      return `DraftLocation.${this.type}(${this.index})`;
-    }
-
-    return `DraftLocation.${this.type}(${this.row}, ${this.col}, ${this.index})`;
+  toString(): string {
+    return `${this.type}-${this.row}-${this.col}-${this.index}`;
   }
 }
 
@@ -108,5 +100,3 @@ export const moveCard = (cards: number[][][], source: DraftLocation, target: Dra
   const [card, newSource] = removeCard(newCards, source);
   return addCard(newSource, target, card);
 };
-
-export default DraftLocation;

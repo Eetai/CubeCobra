@@ -1,4 +1,4 @@
-import { cardCmc, cardType, cmcColumn } from '../client/utils/cardutil';
+import { cardCmc } from '../client/utils/cardutil';
 import Card from '../datatypes/Card';
 import Draft, { DraftStep } from '../datatypes/Draft';
 
@@ -257,13 +257,26 @@ export const getDefaultPosition = (card: Card, picks: any[][][]): [number, numbe
   return [row, col, colIndex];
 };
 
-export const getCardDefaultRowColumn = (card: Card): { row: number; col: number } => {
-  const isCreature = cardType(card).toLowerCase().includes('creature');
-  //Some cards, like Assault//Battery, have a CMC that is a decimal (and then there are un-cards). cmcColumn normalizes between 0 and 8
-  const cmc = cmcColumn(card);
-
-  const row = isCreature ? 0 : 1;
-  const col = Math.max(0, Math.min(7, cmc));
+export const getCardDefaultRowColumn = (card: any) => {
+  if (!card || !card.details) {
+    return { row: 1, col: 0 };
+  }
+  
+  // Default to column 0 if we can't determine the card's mana value
+  const col = Math.min(7, Math.max(0, Math.floor(card.details.cmc || 0)));
+  
+  // Default to non-creature row (row 1) if we can't tell
+  let row = 1;
+  
+  try {
+    // Only check type_line if it exists
+    const typeLine = card.details.type_line || '';
+    if (typeLine.toLowerCase().includes('creature')) {
+      row = 0;
+    }
+  } catch (e) {
+    console.warn('Error determining card type:', e);
+  }
 
   return { row, col };
 };

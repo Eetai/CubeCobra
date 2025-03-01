@@ -1,0 +1,54 @@
+/* Fix for drag overlay positioning - create a coordinate-independent solution */
+.simple-drag-overlay {
+  width: 100%;
+  pointer-events: none;
+  position: relative;
+  /* Remove fixed offsets that only work for specific screen positions */
+  transform: translate(-50%, -50%);
+  margin-top: -125px;  /* Use percentage-based vertical offset */
+}
+
+/* Apply styles to the drag overlay container */
+div[data-dnd-overlay="true"] {
+  pointer-events: none !important;
+  cursor: grabbing !important;
+  /* Prevent default positioning */
+  transform: none !important;
+  /* Instead of fixed offsets, use viewport-centered coordinates */
+  width: 0 !important;  /* Prevent the container from influencing layout */
+  height: 0 !important;
+  overflow: visible !important;
+}
+
+/* Make sure the card isn't clipped if near screen edges */
+div[data-dnd-overlay="true"] > * {
+  position: fixed !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+}
+
+/* STRONG OVERRIDES for drag positioning */
+.card-drag-overlay {
+  width: 140px !important;
+  transform: translate(-50%, -50%) !important;
+  pointer-events: none !important;
+  z-index: 9999 !important;
+}
+
+/* Force the overlay to be centered on cursor */
+[data-dnd-overlay="true"] {
+  cursor: grabbing !important;
+  position: fixed !important;
+  pointer-events: none !important;
+  z-index: 9999 !important;
+  margin: 0 !important;
+  inset: auto !important;
+  transform: none !important;
+}
+
+/* Remove decoration from drag overlay */
+.drag-card {
+  opacity: 0.8;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5) !important;
+}

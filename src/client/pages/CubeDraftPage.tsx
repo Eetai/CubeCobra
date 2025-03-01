@@ -1,6 +1,6 @@
 import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
-
-import { DndContext } from '@dnd-kit/core';
+import { DndContext, DragOverlay } from '@dnd-kit/core';
+import type { PredictResponse } from 'src/router/routes/api/draftbots/batchpredict.ts';
 import type { State } from 'src/router/routes/draft/finish.ts';
 
 import { Card } from 'components/base/Card';
@@ -17,7 +17,8 @@ import useLocalStorage from 'hooks/useLocalStorage';
 import CubeLayout from 'layouts/CubeLayout';
 import MainLayout from 'layouts/MainLayout';
 import { makeSubtitle } from 'utils/cardutil';
-import { prefetchImages } from 'utils/prefetchUtil';
+import { createSafeCard } from '../utils/prefetchUtil';
+import FoilCardImage from '../components/FoilCardImage';
 
 import { getCardDefaultRowColumn, setupPicks } from '../../util/draftutil';
 
@@ -27,25 +28,18 @@ interface CubeDraftPageProps {
   loginCallback?: string;
 }
 
-interface PredictResponse {
-  prediction: {
-    oracle: string;
-    rating: number;
-  }[][];
-}
-
 interface BatchPredictRequest {
   pack: string[];
   picks: string[];
 }
 
 const fetchBatchPredict = async (inputs: BatchPredictRequest[]): Promise<PredictResponse> => {
-
   const response = await fetch('/api/draftbots/batchpredict', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ inputs }),
   });
+
   if (!response.ok) {
     throw new Error('Failed to fetch batch predictions');
   }
@@ -85,7 +79,7 @@ const getInitialState = (draft: Draft): State => {
   };
 };
 
-interface DraftStatus {
+interface DraftState {
   loading: boolean;
   predictionsLoading: boolean;
   predictError: boolean;
@@ -94,26 +88,20 @@ interface DraftStatus {
 }
 
 const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallback }) => {
-
-  // Draft State
-  // These reflect the current state of the draft objects, including the cards in the pack, the picks made, and the ratings for each card.
   const [state, setState] = useLocalStorage(`draftstate-${draft.id}`, getInitialState(draft));
   const [mainboard, setMainboard] = useLocalStorage(`mainboard-${draft.id}`, setupPicks(2, 8));
   const [sideboard, setSideboard] = useLocalStorage(`sideboard-${draft.id}`, setupPicks(1, 8));
   const [ratings, setRatings] = useState<number[]>([]);
   const [currentPredictions, setCurrentPredictions] = useState<PredictResponse | null>(null);
-
-  // Draft Status
-  // These are used to track the status of the draft itself, including loading, errors, etc.
-  const [draftStatus, setDraftStatus] = useLocalStorage<DraftStatus>(`draftstatus-${draft.id}`, {
+  const [draftState, setDraftState] = useState<DraftState>({
     loading: false,
     predictionsLoading: false,
     predictError: false,
     retryInProgress: false,
     endDraftError: false,
   });
-  
   const [dragStartTime, setDragStartTime] = useState<number | null>(null);
+  const [activeCard, setActiveCard] = useState<{ card: ReturnType<typeof createSafeCard> } | null>(null);
   const { csrfFetch } = useContext(CSRFContext);
 
   const getLocationReferences = useCallback(
@@ -133,42 +121,11 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
     [mainboard, setMainboard, setSideboard, sideboard],
   );
 
-  const endDraft = useCallback(async () => {
-    setDraftStatus((prev) => ({ ...prev, endDraftError: false, loading: true }));
-    
-    try {
-
-      const response = await csrfFetch(`/draft/finish/${draft.id}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          state,
-          mainboard,
-          sideboard,
-        }),
-      });
-      
-      // Force error if status is not 2xx range
-      if (!response.ok) {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-      else {
-      window.location.href = `/draft/deckbuilder/${draft.id}`;
-      }
-    } catch (err) {
-      console.error('endDraft error caught:', err);
-      setDraftStatus((prev) => ({ ...prev, loading: false, endDraftError: true }));
-    }
-  }, [csrfFetch, draft.id, mainboard, sideboard, state, setDraftStatus]);
-
-  
   const getPredictions = useCallback(async (request: { 
     state: any, 
     packCards: { index: number; oracle_id: string }[] 
   }) => {
-    setDraftStatus((prev) => ({ ...prev, predictionsLoading: true, predictError: false }));
+    setDraftState((prev) => ({ ...prev, predictionsLoading: true, predictError: false }));
     try {
       const inputs = request.state.seats.map((seat: any) => ({
         pack: seat.pack
@@ -184,20 +141,47 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
       setRatings(processPredictions(json, request.packCards));
       return json;
     } catch (error) {
-      console.error('Error fetching predictions:', error,'inputs',request.state);
-      setDraftStatus((prev) => ({ ...prev, predictError: true }));
+      console.error('Error fetching predictions:', error);
+      setDraftState((prev) => ({ ...prev, predictError: true }));
       return null;
     } finally {
-      setDraftStatus((prev) => ({ ...prev, predictionsLoading: false }));
+      setDraftState((prev) => ({ ...prev, predictionsLoading: false }));
     }
   }, [draft.cards]);
 
+  const endDraft = useCallback(async () => {
+    setDraftState((prev) => ({ ...prev, endDraftError: false, loading: true }));
+    
+    try {
+      const response = await csrfFetch(`/draft/finish/${draft.id}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          state,
+          mainboard,
+          sideboard,
+        }),
+      });
+
+      if (response.ok) {
+        window.location.href = `/draft/deckbuilder/${draft.id}`;
+      } else {
+        throw new Error(`HTTP error! Status: ${response.status}`);
+      }
+    } catch (err) {
+      console.error('endDraft error caught:', err);
+      setDraftState((prev) => ({ ...prev, loading: false, endDraftError: true }));
+    }
+  }, [csrfFetch, draft.id, mainboard, sideboard, state]);
+
   const handleRetryPredict = useCallback(async () => {
-    if (draftStatus.retryInProgress || !state?.seats?.[0]?.pack) {
+    if (draftState.retryInProgress || !state?.seats?.[0]?.pack) {
       return;
     }
 
-    setDraftStatus((prev) => ({ ...prev, retryInProgress: true }));
+    setDraftState((prev) => ({ ...prev, retryInProgress: true }));
     try {
       const currentState = state;
       const packCards = currentState.seats[0].pack.map((index) => ({
@@ -206,33 +190,18 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
       }));
       await getPredictions({ state: currentState, packCards });
     } finally {
-      setDraftStatus((prev) => ({ ...prev, retryInProgress: false }));
+      setDraftState((prev) => ({ ...prev, retryInProgress: false }));
     }
-  }, [state, draft.cards, getPredictions, draftStatus.retryInProgress, setDraftStatus]);
-
-  const prefetchNextPack = useCallback(() => {
-    // If we have InitialState and there's a next pack
-    if (draft.InitialState && state.pack < draft.InitialState[0].length) {
-      const nextPackIndex = state.pack; // Current pack is 1-based, so next pack index is current pack value
-      const nextPackCards = draft.InitialState[0][nextPackIndex].cards;
-      
-      // Get all image URLs from the next pack - filter undefined values before passing to prefetchImages
-      const imagesToPrefetch = nextPackCards
-        .map((cardIndex: number) => {
-          const card = draft.cards[cardIndex];
-          return card?.details?.image_normal;
-        })
-        .filter((url): url is string => Boolean(url)); // Type guard to ensure array contains only strings
-      
-      console.log(`Prefetching ${imagesToPrefetch.length} images for next pack`);
-      prefetchImages(imagesToPrefetch);
-    }
-  }, [draft.InitialState, draft.cards, state.pack]);
+  }, [state, draft.cards, getPredictions, draftState.retryInProgress]);
 
   const makePick = useCallback(
     async (index: number, location: location, row: number, col: number) => {
+      if (draftState.predictError || draftState.loading || draftState.predictionsLoading) {
+        console.log('Pick blocked:', { predictError: draftState.predictError, loading: draftState.loading, predictionsLoading: draftState.predictionsLoading });
+        return;
+      }
       
-      setDraftStatus((prev) => ({ ...prev, loading: true }));
+      setDraftState((prev) => ({ ...prev, loading: true }));
       setRatings([]); // Clear ratings
       const newState = { ...state };
 
@@ -257,13 +226,13 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
 
       if (!currentStep) {
         // This should never happen, but if it does, the draft finishing should be in progress
-        setDraftStatus((prev) => ({ ...prev, loading: false }));
+        setDraftState((prev) => ({ ...prev, loading: false }));
         return;
       }
 
       if (currentStep.action === 'endpack' || currentStep.action === 'pass') {
         // This should never happen
-        setDraftStatus((prev) => ({ ...prev, loading: false }));
+        setDraftState((prev) => ({ ...prev, loading: false }));
         return;
       }
 
@@ -334,7 +303,7 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
       // either pass the pack, open the next pack, or end the draft
       if (!nextStep) {
         // should never happen
-        setDraftStatus((prev) => ({ ...prev, loading: false }));
+        setDraftState((prev) => ({ ...prev, loading: false }));
         return;
       }
 
@@ -354,13 +323,15 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
         newState.stepQueue.shift();
       }
 
-      if (nextStep.action === 'endpack') {
+      // get the next step after handling pass
+      const nextStepAfterPass = newState.stepQueue[0];
+
+      if (nextStepAfterPass && nextStepAfterPass.action === 'endpack') {
         // we open the next pack or end the draft
         if (draft.InitialState && state.pack === draft.InitialState[0].length) {
-          // Save state BEFORE attempting to end draft
-          // This ensures the pick is saved even if endDraft fails
+          // Save state before attempting to end draft
           setState(newState);
-          setDraftStatus((prev) => ({ ...prev, loading: false }));
+          setDraftState((prev) => ({ ...prev, loading: false }));
           
           // Now attempt to end the draft
           await endDraft();
@@ -398,28 +369,30 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
         }
       }
 
-      // After state is updated, check if this is the last pick of the pack
-      // If it is, prefetch the next pack im      // Check if the next step is a pass or endpack action, indicating end of pack
-      if (nextStep && 
-          (nextStep.action === 'pass' || nextStep.action === 'endpack') && 
-          draft.InitialState && 
-          state.pack < draft.InitialState[0].length) {
-        // Wait a bit to not disrupt the current UI operation
-        setTimeout(prefetchNextPack, 500);
-      }
-
       setState(newState);
-      setDraftStatus((prev) => ({ ...prev, loading: false }));
+      setDraftState((prev) => ({ ...prev, loading: false }));
     },
-    [draft.InitialState, draft.cards, draft.seats.length, endDraft, getLocationReferences, setState, state, currentPredictions, getPredictions, setDraftStatus, prefetchNextPack],
+    [draft.InitialState, draft.cards, draft.seats.length, endDraft, getLocationReferences, setState, state, currentPredictions, getPredictions, draftState.predictError, draftState.loading, draftState.predictionsLoading],
   );
 
   const selectCardByIndex = useCallback(
     (packIndex: number) => {
-      const cardIndex = state.seats[0].pack[packIndex];
-      const card = draft.cards[cardIndex];
+      console.log(`selectCardByIndex called with packIndex: ${packIndex}`);
+      
+      if (packIndex < 0 || packIndex >= state.seats[0].pack.length) {
+        console.error('Invalid pack index:', packIndex);
+        return;
+      }
 
+      const cardIndex = state.seats[0].pack[packIndex];
+      console.log(`Card index in draft cards array: ${cardIndex}`);
+      
+      const card = createSafeCard(draft.cards[cardIndex]);
+      console.log('Card details:', card);
+      
       const { row, col } = getCardDefaultRowColumn(card);
+      console.log(`Card will be placed at row ${row}, col ${col}`);
+      
       makePick(packIndex, locations.deck, row, col);
     },
     [state.seats, draft.cards, makePick],
@@ -522,20 +495,20 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
       state.stepQueue[0] &&
       (state.stepQueue[0].action === 'pickrandom' || state.stepQueue[0].action === 'trashrandom') &&
       state.seats[0].pack.length > 0 &&
-      !draftStatus.loading
+      !draftState.loading
     ) {
-      setDraftStatus((prev) => ({ ...prev, loading: true }));
+      setDraftState((prev) => ({ ...prev, loading: true }));
       setTimeout(() => {
         //Automatically select a card from the pack, by picking a random index position within the available card pack
         selectCardByIndex(Math.floor(Math.random() * state.seats[0].pack.length));
       }, 1000);
     }
-  }, [selectCardByIndex, draftStatus.loading, state.stepQueue, state.seats]);
+  }, [selectCardByIndex, draftState.loading, state.stepQueue, state.seats]);
 
   // P1P1 ratings fetch necessary, the rest come via makePick
   useEffect(() => {
     const fetchInitialRatings = async () => {
-      if (state?.seats?.[0]?.pack?.length > 0) {
+      if (state?.seats?.[0]?.pack?.length > 0 && !ratings.length) {
         const request = {
           state,
           packCards: state.seats[0].pack.map((index) => ({
@@ -548,28 +521,21 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
     };
 
     fetchInitialRatings();
-  }, [draft.cards, state, getPredictions]);
-
-  useEffect(() => {
-    // Prefetch the next pack on component mount if we're not on the last pack
-    if (draft.InitialState && state.pack < draft.InitialState[0].length) {
-      prefetchNextPack();
-    }
-  }, [prefetchNextPack]);
+  }, [draft.cards, state, getPredictions, ratings]);
 
   const packTitle: string = useMemo(() => {
     const nextStep = state.stepQueue[0];
 
-    if (draftStatus.endDraftError) {
-      return 'Draft completion failed. Please retry.';
-    }
-
-    if (draftStatus.loading) {
+    if (draftState.loading) {
       if (state.stepQueue.length <= 1) {
         return 'Finishing up draft...';
       }
 
       return 'Waiting for next pack...';
+    }
+
+    if (draftState.endDraftError) {
+      return 'Draft completion failed. Please retry.';
     }
 
     switch (nextStep.action) {
@@ -586,74 +552,100 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
       default:
         return '';
     }
-  }, [state, draftStatus.loading, draftStatus.endDraftError]);
+  }, [state, draftState.loading, draftState.endDraftError]);
 
   const disabled = state.stepQueue[0].action === 'pickrandom' || 
                 state.stepQueue[0].action === 'trashrandom' || 
-                draftStatus.predictError || 
-                draftStatus.predictionsLoading ||
-                draftStatus.endDraftError;
+                draftState.predictError || 
+                draftState.predictionsLoading;
 
   return (
-    <MainLayout loginCallback={loginCallback}>
-      <DisplayContextProvider cubeID={cube.id}>
-        <CubeLayout cube={cube} activeLink="playtest">
-          <DndContext onDragEnd={onMoveCard} onDragStart={() => setDragStartTime(Date.now())}>
-            <div className="relative">
-              {/* Only show the pack if there are actually cards to show */}
-              {state?.seats?.[0]?.pack?.length > 0 ? (
-                <Pack
-                  pack={state.seats[0].pack.map((index) => draft.cards[index])}
-                  loading={draftStatus.loading}
-                  loadingPredictions={draftStatus.predictionsLoading}
-                  title={packTitle}
-                  disabled={disabled || draftStatus.predictError || draftStatus.retryInProgress}
-                  ratings={ratings}
-                  error={draftStatus.predictError}
-                  onRetry={handleRetryPredict}
-                  retryInProgress={draftStatus.retryInProgress}
-                  endDraftError={draftStatus.endDraftError}
-                  onEndDraft={endDraft}
-                />
-              ) : draftStatus.endDraftError ? (
-              <></>
-                // <Card className="mt-3 bg-red-50">
-                //   {/* <CardBody>
-                //     <div className="flex justify-between items-center">
-                //       <div>
-                //         <Text semibold lg>Draft completion failed. Please retry.</Text>
-                //         <Text>Your picks have been saved but the draft couldn't be finalized.</Text>
-                //       </div>
-                //       <Button color="danger" onClick={endDraft} disabled={draftStatus.loading}>
-                //         {draftStatus.loading ? 'Retrying...' : 'Retry End Draft'}
-                //       </Button>
-                //     </div>
-                //   </CardBody> */}
-                // </Card>
-              ) : null}
-              
-              <Card className="my-3">
-                <DeckStacks
-                  cards={mainboard.map((row) => row.map((col) => col.map((index) => draft.cards[index])))}
-                  title="Mainboard"
-                  subtitle={makeSubtitle(mainboard.flat(3).map((index) => draft.cards[index]))}
-                  locationType={locations.deck}
-                  xs={4}
-                  lg={8}
-                />
-                <DeckStacks
-                  cards={sideboard.map((row) => row.map((col) => col.map((index) => draft.cards[index])))}
-                  title="Sideboard"
-                  locationType={locations.sideboard}
-                  xs={4}
-                  lg={8}
-                />
-              </Card>
-            </div>
-          </DndContext>
-        </CubeLayout>
-      </DisplayContextProvider>
-    </MainLayout>
+    <>
+      {/* Load our drag overlay fix CSS */}
+      <link rel="stylesheet" href="/css/drag-overlay-fix.css" />
+      
+      <MainLayout loginCallback={loginCallback}>
+        <DisplayContextProvider cubeID={cube.id}>
+          <CubeLayout cube={cube} activeLink="playtest">
+            <DndContext 
+              onDragEnd={onMoveCard} 
+              onDragStart={(event) => {
+                setDragStartTime(Date.now());
+                // Find the card that's being dragged
+                const source = event.active.data.current as DraftLocation;
+                if (source.type === locations.pack) {
+                  const cardIndex = state.seats[0].pack[source.index];
+                  setActiveCard({ card: createSafeCard(draft.cards[cardIndex]) });
+                } else {
+                  const { board } = getLocationReferences(source.type);
+                  const cardIndex = board[source.row][source.col][source.index];
+                  setActiveCard({ card: createSafeCard(draft.cards[cardIndex]) });
+                }
+              }}
+            >
+              <div className="relative">
+                {state?.seats?.[0]?.pack?.length > 0 ? (
+                  <Pack
+                    pack={state.seats[0].pack.map((index) => createSafeCard(draft.cards[index]))}
+                    loading={draftState.loading}
+                    loadingPredictions={draftState.predictionsLoading}
+                    title={packTitle}
+                    disabled={disabled}
+                    ratings={ratings}
+                    error={draftState.predictError}
+                    onRetry={handleRetryPredict}
+                    retryInProgress={draftState.retryInProgress}
+                    endDraftError={draftState.endDraftError}
+                    onEndDraft={endDraft}
+                    onPickMade={(cardIndex) => {
+                      if (cardIndex === undefined || state.seats[0].pack.length <= cardIndex) {
+                        console.error('Invalid card index for pick:', cardIndex);
+                        return;
+                      }
+                      console.log('Direct pick made for card index:', cardIndex);
+                      
+                      // Get the card and determine where to put it
+                      const cardIndex2 = state.seats[0].pack[cardIndex];
+                      const card = draft.cards[cardIndex2];
+                      const { row, col } = getCardDefaultRowColumn(card);
+                      
+                      // Make the pick into the mainboard
+                      makePick(cardIndex, locations.deck, row, col);
+                    }}
+                  />
+                ) : draftState.endDraftError ? (
+                  <></>
+                ) : null}
+                <Card className="my-3">
+                  <DeckStacks
+                    cards={mainboard.map((row) => row.map((col) => col.map((index) => createSafeCard(draft.cards[index]))))}
+                    title="Mainboard"
+                    subtitle={makeSubtitle(mainboard.flat(3).map((index) => createSafeCard(draft.cards[index])))}
+                    locationType={locations.deck}
+                    xs={4}
+                    lg={8}
+                  />
+                  <DeckStacks
+                    cards={sideboard.map((row) => row.map((col) => col.map((index) => createSafeCard(draft.cards[index]))))}
+                    title="Sideboard"
+                    locationType={locations.sideboard}
+                    xs={4}
+                    lg={8}
+                  />
+                </Card>
+              </div>
+              <DragOverlay adjustScale={false} dropAnimation={null}>
+                {activeCard && (
+                  <div className="card-drag-overlay">
+                    <FoilCardImage card={activeCard.card} className="drag-card" />
+                  </div>
+                )}
+              </DragOverlay>
+            </DndContext>
+          </CubeLayout>
+        </DisplayContextProvider>
+      </MainLayout>
+    </>
   );
 };
 
