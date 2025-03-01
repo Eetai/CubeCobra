@@ -17,6 +17,7 @@ import useLocalStorage from 'hooks/useLocalStorage';
 import CubeLayout from 'layouts/CubeLayout';
 import MainLayout from 'layouts/MainLayout';
 import { makeSubtitle } from 'utils/cardutil';
+import { prefetchImages } from 'utils/prefetchUtil';
 
 import { getCardDefaultRowColumn, setupPicks } from '../../util/draftutil';
 
@@ -209,18 +210,27 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
     }
   }, [state, draft.cards, getPredictions, draftStatus.retryInProgress, setDraftStatus]);
 
+  const prefetchNextPack = useCallback(() => {
+    // If we have InitialState and there's a next pack
+    if (draft.InitialState && state.pack < draft.InitialState[0].length) {
+      const nextPackIndex = state.pack; // Current pack is 1-based, so next pack index is current pack value
+      const nextPackCards = draft.InitialState[0][nextPackIndex].cards;
+      
+      // Get all image URLs from the next pack - filter undefined values before passing to prefetchImages
+      const imagesToPrefetch = nextPackCards
+        .map((cardIndex: number) => {
+          const card = draft.cards[cardIndex];
+          return card?.details?.image_normal;
+        })
+        .filter((url): url is string => Boolean(url)); // Type guard to ensure array contains only strings
+      
+      console.log(`Prefetching ${imagesToPrefetch.length} images for next pack`);
+      prefetchImages(imagesToPrefetch);
+    }
+  }, [draft.InitialState, draft.cards, state.pack]);
+
   const makePick = useCallback(
     async (index: number, location: location, row: number, col: number) => {
-      // Don't allow picks when waiting for endDraft retry
-      if (draftStatus.predictError || draftStatus.loading || draftStatus.predictionsLoading || draftStatus.endDraftError) {
-        console.log('Pick blocked:', { 
-          predictError: draftStatus.predictError, 
-          loading: draftStatus.loading, 
-          predictionsLoading: draftStatus.predictionsLoading,
-          endDraftError: draftStatus.endDraftError
-        });
-        return;
-      }
       
       setDraftStatus((prev) => ({ ...prev, loading: true }));
       setRatings([]); // Clear ratings
@@ -388,10 +398,20 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
         }
       }
 
+      // After state is updated, check if this is the last pick of the pack
+      // If it is, prefetch the next pack im      // Check if the next step is a pass or endpack action, indicating end of pack
+      if (nextStep && 
+          (nextStep.action === 'pass' || nextStep.action === 'endpack') && 
+          draft.InitialState && 
+          state.pack < draft.InitialState[0].length) {
+        // Wait a bit to not disrupt the current UI operation
+        setTimeout(prefetchNextPack, 500);
+      }
+
       setState(newState);
       setDraftStatus((prev) => ({ ...prev, loading: false }));
     },
-    [draft.InitialState, draft.cards, draft.seats.length, endDraft, getLocationReferences, setState, state, currentPredictions, getPredictions, draftStatus.endDraftError],
+    [draft.InitialState, draft.cards, draft.seats.length, endDraft, getLocationReferences, setState, state, currentPredictions, getPredictions, setDraftStatus, prefetchNextPack],
   );
 
   const selectCardByIndex = useCallback(
@@ -529,6 +549,13 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
 
     fetchInitialRatings();
   }, [draft.cards, state, getPredictions]);
+
+  useEffect(() => {
+    // Prefetch the next pack on component mount if we're not on the last pack
+    if (draft.InitialState && state.pack < draft.InitialState[0].length) {
+      prefetchNextPack();
+    }
+  }, [prefetchNextPack]);
 
   const packTitle: string = useMemo(() => {
     const nextStep = state.stepQueue[0];
