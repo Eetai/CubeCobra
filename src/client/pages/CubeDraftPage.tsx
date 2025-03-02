@@ -1,26 +1,25 @@
-import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { DndContext, DragOverlay } from '@dnd-kit/core';
-import type { PredictResponse } from 'src/router/routes/api/draftbots/batchpredict.ts';
-import type { State } from 'src/router/routes/draft/finish.ts';
+import React, { useCallback, useState } from 'react';
 
-import { Card } from 'components/base/Card';
-import DeckStacks from 'components/DeckStacks';
+import { DndContext } from '@dnd-kit/core';
+
 import Pack from 'components/Pack';
 import RenderToRoot from 'components/RenderToRoot';
-import { CSRFContext } from 'contexts/CSRFContext';
 import { DisplayContextProvider } from 'contexts/DisplayContext';
 import Cube from 'datatypes/Cube';
-import Draft, { DraftStep } from 'datatypes/Draft';
-import DraftLocation, { addCard, location, removeCard } from 'drafting/DraftLocation';
+import Draft from 'datatypes/Draft';
+import DraftLocation, { addCard, removeCard } from 'drafting/DraftLocation';
 import { locations } from 'drafting/DraftLocation';
-import useLocalStorage from 'hooks/useLocalStorage';
 import CubeLayout from 'layouts/CubeLayout';
 import MainLayout from 'layouts/MainLayout';
-import { makeSubtitle } from 'utils/cardutil';
-import { createSafeCard } from '../utils/prefetchUtil';
-import FoilCardImage from '../components/FoilCardImage';
 
-import { getCardDefaultRowColumn, setupPicks } from '../../util/draftutil';
+import { getCardDefaultRowColumn } from '../../util/draftutil';
+import CardDragOverlay from '../components/CardDragOverlay';
+import DraftDeckArea from '../components/DraftDeckArea';
+import DraftHeader from '../components/DraftHeader';
+import FadeOverlay from '../components/FadeOverlay';
+import { AnimationProvider } from '../contexts/AnimationContext';
+import useDraft from '../hooks/useDraft';
+import { createSafeCard } from '../utils/prefetchUtil';
 
 interface CubeDraftPageProps {
   cube: Cube;
@@ -28,376 +27,30 @@ interface CubeDraftPageProps {
   loginCallback?: string;
 }
 
-interface BatchPredictRequest {
-  pack: string[];
-  picks: string[];
-}
-
-const fetchBatchPredict = async (inputs: BatchPredictRequest[]): Promise<PredictResponse> => {
-  const response = await fetch('/api/draftbots/batchpredict', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ inputs }),
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to fetch batch predictions');
-  }
-
-  return response.json();
-};
-
-const processPredictions = (json: PredictResponse, packCards: any[]) => {
-  // Create a map of oracle IDs to ratings
-  const predictionsMap = new Map(json.prediction[0].map((p) => [p.oracle, p.rating]));
-  // Then add ratings to packCards while maintaining pack order
-  return packCards.map((card) => predictionsMap.get(card.oracle_id) || 0);
-};
-
-const getInitialState = (draft: Draft): State => {
-  const stepQueue: DraftStep[] = [];
-
-  if (draft.InitialState) {
-    // only look at the first seat
-    const seat = draft.InitialState[0];
-
-    for (const pack of seat) {
-      stepQueue.push(...pack.steps, { action: 'endpack', amount: null });
-    }
-  }
-
-  // if there are no picks made, return the initial state
-  return {
-    seats: draft.seats.map((_, index) => ({
-      picks: [],
-      trashed: [],
-      pack: draft.InitialState ? draft.InitialState[index][0].cards : [],
-    })),
-    stepQueue,
-    pack: 1,
-    pick: 1,
-  };
-};
-
-interface DraftState {
-  loading: boolean;
-  predictionsLoading: boolean;
-  predictError: boolean;
-  retryInProgress: boolean;
-  endDraftError?: boolean;
-}
-
 const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallback }) => {
-  const [state, setState] = useLocalStorage(`draftstate-${draft.id}`, getInitialState(draft));
-  const [mainboard, setMainboard] = useLocalStorage(`mainboard-${draft.id}`, setupPicks(2, 8));
-  const [sideboard, setSideboard] = useLocalStorage(`sideboard-${draft.id}`, setupPicks(1, 8));
-  const [ratings, setRatings] = useState<number[]>([]);
-  const [currentPredictions, setCurrentPredictions] = useState<PredictResponse | null>(null);
-  const [draftState, setDraftState] = useState<DraftState>({
-    loading: false,
-    predictionsLoading: false,
-    predictError: false,
-    retryInProgress: false,
-    endDraftError: false,
-  });
   const [dragStartTime, setDragStartTime] = useState<number | null>(null);
   const [activeCard, setActiveCard] = useState<{ card: ReturnType<typeof createSafeCard> } | null>(null);
-  const { csrfFetch } = useContext(CSRFContext);
+  const [showRatings, setShowRatings] = useState(false);
 
-  const getLocationReferences = useCallback(
-    (type: location): { board: any[][][]; setter: React.Dispatch<React.SetStateAction<any[][][]>> } => {
-      if (type === locations.deck) {
-        return {
-          board: mainboard,
-          setter: setMainboard,
-        };
-      } else {
-        return {
-          board: sideboard,
-          setter: setSideboard,
-        };
-      }
-    },
-    [mainboard, setMainboard, setSideboard, sideboard],
-  );
+  const { 
+    state, 
+    mainboard, 
+    sideboard, 
+    ratings,
+    draftLoading, 
+    predictionsLoading,
+    predictError,
+    retryInProgress,
+    fadeTransition,
+    packTitle,
+    packDisabled,
+    makePick,
+    selectCardByIndex,
+    handleRetryPredict,
+    getLocationReferences
+  } = useDraft(draft);
 
-  const getPredictions = useCallback(async (request: { 
-    state: any, 
-    packCards: { index: number; oracle_id: string }[] 
-  }) => {
-    setDraftState((prev) => ({ ...prev, predictionsLoading: true, predictError: false }));
-    try {
-      const inputs = request.state.seats.map((seat: any) => ({
-        pack: seat.pack
-          .map((index: number) => draft.cards[index]?.details?.oracle_id)
-          .filter((id: string | undefined): id is string => Boolean(id)),
-        picks: seat.picks
-          .map((index: number) => draft.cards[index]?.details?.oracle_id)
-          .filter((id: string | undefined): id is string => Boolean(id))
-      }));
-
-      const json = await fetchBatchPredict(inputs);
-      setCurrentPredictions(json);
-      setRatings(processPredictions(json, request.packCards));
-      return json;
-    } catch (error) {
-      console.error('Error fetching predictions:', error);
-      setDraftState((prev) => ({ ...prev, predictError: true }));
-      return null;
-    } finally {
-      setDraftState((prev) => ({ ...prev, predictionsLoading: false }));
-    }
-  }, [draft.cards]);
-
-  const endDraft = useCallback(async () => {
-    setDraftState((prev) => ({ ...prev, endDraftError: false, loading: true }));
-    
-    try {
-      const response = await csrfFetch(`/draft/finish/${draft.id}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          state,
-          mainboard,
-          sideboard,
-        }),
-      });
-
-      if (response.ok) {
-        window.location.href = `/draft/deckbuilder/${draft.id}`;
-      } else {
-        throw new Error(`HTTP error! Status: ${response.status}`);
-      }
-    } catch (err) {
-      console.error('endDraft error caught:', err);
-      setDraftState((prev) => ({ ...prev, loading: false, endDraftError: true }));
-    }
-  }, [csrfFetch, draft.id, mainboard, sideboard, state]);
-
-  const handleRetryPredict = useCallback(async () => {
-    if (draftState.retryInProgress || !state?.seats?.[0]?.pack) {
-      return;
-    }
-
-    setDraftState((prev) => ({ ...prev, retryInProgress: true }));
-    try {
-      const currentState = state;
-      const packCards = currentState.seats[0].pack.map((index) => ({
-        index,
-        oracle_id: draft.cards[index]?.details?.oracle_id || '',
-      }));
-      await getPredictions({ state: currentState, packCards });
-    } finally {
-      setDraftState((prev) => ({ ...prev, retryInProgress: false }));
-    }
-  }, [state, draft.cards, getPredictions, draftState.retryInProgress]);
-
-  const makePick = useCallback(
-    async (index: number, location: location, row: number, col: number) => {
-      if (draftState.predictError || draftState.loading || draftState.predictionsLoading) {
-        console.log('Pick blocked:', { predictError: draftState.predictError, loading: draftState.loading, predictionsLoading: draftState.predictionsLoading });
-        return;
-      }
-      
-      setDraftState((prev) => ({ ...prev, loading: true }));
-      setRatings([]); // Clear ratings
-      const newState = { ...state };
-
-      // look at the current step
-      const currentStep = newState.stepQueue[0];
-
-      //The board only changes when there is a pick (human or auto) action
-      if (currentStep.action.includes('pick')) {
-        const { board, setter } = getLocationReferences(location);
-        board[row][col].push(state.seats[0].pack[index]);
-        setter(board);
-      }
-
-      // if amount is more than 1
-      if (currentStep.amount && currentStep.amount > 1) {
-        // we will decrement the amount and make the pick
-        newState.stepQueue[0] = { ...currentStep, amount: currentStep.amount - 1 };
-      } else {
-        // we need to pop the current step
-        newState.stepQueue.shift();
-      }
-
-      if (!currentStep) {
-        // This should never happen, but if it does, the draft finishing should be in progress
-        setDraftState((prev) => ({ ...prev, loading: false }));
-        return;
-      }
-
-      if (currentStep.action === 'endpack' || currentStep.action === 'pass') {
-        // This should never happen
-        setDraftState((prev) => ({ ...prev, loading: false }));
-        return;
-      }
-
-      if (currentStep.action === 'pick' || currentStep.action === 'trash') {
-        // Use existing predictions for bot picks
-        if (currentPredictions?.prediction) {
-          const picks = currentPredictions.prediction.slice(1).map((seat, index) => {
-            const pack = state.seats[index + 1].pack.map((i) => draft.cards[i].details?.oracle_id);
-
-            if (pack.length === 0) {
-              return -1;
-            }
-
-            if (seat.length === 0) {
-              // pick at random
-              return Math.floor(Math.random() * pack.length);
-            }
-
-            const oracle = seat.reduce((prev, current) => (prev.rating > current.rating ? prev : current)).oracle;
-            return pack.findIndex((oracleId) => oracleId === oracle);
-          });
-
-          // make all the picks
-          if (currentStep.action === 'pick') {
-            newState.seats[0].picks.unshift(state.seats[0].pack[index]);
-          } else if (currentStep.action === 'trash') {
-            newState.seats[0].trashed.unshift(state.seats[0].pack[index]);
-          }
-          newState.seats[0].pack.splice(index, 1);
-
-          for (let i = 1; i < state.seats.length; i++) {
-            const pick = picks[i - 1];
-
-            if (currentStep.action === 'pick') {
-              newState.seats[i].picks.unshift(state.seats[i].pack[pick]);
-            } else if (currentStep.action === 'trash') {
-              newState.seats[i].trashed.unshift(state.seats[i].pack[pick]);
-            }
-            newState.seats[i].pack.splice(pick, 1);
-          }
-        }
-      } 
-      
-      else if (currentStep.action === 'pickrandom' || currentStep.action === 'trashrandom') {
-        // make random selection
-        if (currentStep.action === 'pickrandom') {
-          newState.seats[0].picks.unshift(state.seats[0].pack[index]);
-          for (let i = 1; i < state.seats.length; i++) {
-            const randomIndex = Math.floor(Math.random() * state.seats[i].pack.length);
-            newState.seats[i].picks.unshift(state.seats[i].pack[randomIndex]);
-            newState.seats[i].pack.splice(randomIndex, 1);
-          }
-        } else if (currentStep.action === 'trashrandom') {
-          newState.seats[0].trashed.unshift(state.seats[0].pack[index]);
-
-          for (let i = 1; i < state.seats.length; i++) {
-            const randomIndex = Math.floor(Math.random() * state.seats[i].pack.length);
-            newState.seats[i].trashed.unshift(randomIndex);
-            newState.seats[i].pack.splice(randomIndex, 1);
-          }
-        }
-        newState.seats[0].pack.splice(index, 1);
-      }
-
-      // get the next step
-      const nextStep = newState.stepQueue[0];
-
-      // either pass the pack, open the next pack, or end the draft
-      if (!nextStep) {
-        // should never happen
-        setDraftState((prev) => ({ ...prev, loading: false }));
-        return;
-      }
-
-      if (nextStep.action === 'pass') {
-        // pass left on an odd pick, right on an even pick
-        const direction = state.pack % 2 === 0 ? 1 : -1;
-        const packs = newState.seats.map((seat) => seat.pack);
-
-        for (let i = 0; i < state.seats.length; i++) {
-          const nextSeat = newState.seats[(i + direction + draft.seats.length) % state.seats.length];
-          nextSeat.pack = packs[i];
-        }
-
-        newState.pick += 1;
-
-        // pop the step
-        newState.stepQueue.shift();
-      }
-
-      // get the next step after handling pass
-      const nextStepAfterPass = newState.stepQueue[0];
-
-      if (nextStepAfterPass && nextStepAfterPass.action === 'endpack') {
-        // we open the next pack or end the draft
-        if (draft.InitialState && state.pack === draft.InitialState[0].length) {
-          // Save state before attempting to end draft
-          setState(newState);
-          setDraftState((prev) => ({ ...prev, loading: false }));
-          
-          // Now attempt to end the draft
-          await endDraft();
-          return;
-        }
-
-        // open the next pack
-        newState.pack += 1;
-        newState.pick = 1;
-
-        for (let i = 0; i < state.seats.length; i++) {
-          newState.seats[i].pack = draft.InitialState ? draft.InitialState[i][newState.pack - 1].cards : [];
-        }
-
-        // pop the step
-        newState.stepQueue.shift();
-
-        // Clear ratings before opening new pack
-        setRatings([]);
-        
-        // Get ratings for new pack after it's opened
-        if (newState.seats[0].pack.length > 0) {
-          const request = {
-            state: newState,
-            packCards: newState.seats[0].pack
-              .map((index) => ({
-                index,
-                oracle_id: draft.cards[index]?.details?.oracle_id || '',
-              }))
-              .filter((card): card is { index: number; oracle_id: string } => 
-                Boolean(card.oracle_id))
-          };
-          
-          await getPredictions(request);
-        }
-      }
-
-      setState(newState);
-      setDraftState((prev) => ({ ...prev, loading: false }));
-    },
-    [draft.InitialState, draft.cards, draft.seats.length, endDraft, getLocationReferences, setState, state, currentPredictions, getPredictions, draftState.predictError, draftState.loading, draftState.predictionsLoading],
-  );
-
-  const selectCardByIndex = useCallback(
-    (packIndex: number) => {
-      console.log(`selectCardByIndex called with packIndex: ${packIndex}`);
-      
-      if (packIndex < 0 || packIndex >= state.seats[0].pack.length) {
-        console.error('Invalid pack index:', packIndex);
-        return;
-      }
-
-      const cardIndex = state.seats[0].pack[packIndex];
-      console.log(`Card index in draft cards array: ${cardIndex}`);
-      
-      const card = createSafeCard(draft.cards[cardIndex]);
-      console.log('Card details:', card);
-      
-      const { row, col } = getCardDefaultRowColumn(card);
-      console.log(`Card will be placed at row ${row}, col ${col}`);
-      
-      makePick(packIndex, locations.deck, row, col);
-    },
-    [state.seats, draft.cards, makePick],
-  );
-
+  // Card movement handler functions
   const moveCardBetweenDeckStacks = useCallback(
     (source: DraftLocation, target: DraftLocation) => {
       const { board: sourceBoard, setter: sourceSetter } = getLocationReferences(source.type);
@@ -417,11 +70,6 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
     [getLocationReferences],
   );
 
-  /*
-   * Clicking on a card within either deck stack moves it to the other. Unlike a drag where we have different source and targets,
-   * on a click we only have the source. We determine the target location based on the source card's cmc/type (getCardDefaultRowColumn)
-   * though if moving to the sideboard only the CMC matters to determine the column.
-   */
   const applyCardClickOnDeckStack = useCallback(
     (source: DraftLocation) => {
       //Determine the card which was clicked in the board, so we can calculate its standard row/col destination
@@ -443,11 +91,40 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
     [draft.cards, getLocationReferences, moveCardBetweenDeckStacks],
   );
 
+  const handlePackToDeck = useCallback(
+    (source: DraftLocation, target: DraftLocation) => {
+      // When dragging a card from the pack to the deck or sideboard
+      makePick(source.index, target.type, target.row, target.col);
+    },
+    [makePick]
+  );
+
+  const handleDeckToSideboard = useCallback(
+    (source: DraftLocation, target: DraftLocation) => {
+      // Moving cards between deck and sideboard
+      moveCardBetweenDeckStacks(source, target);
+    },
+    [moveCardBetweenDeckStacks]
+  );
+
+  const handleSameLocationClick = useCallback(
+    (source: DraftLocation) => {
+      if (source.type === locations.pack) {
+        // For pack: A quick click/drop is treated as a pick
+        return selectCardByIndex(source.index);
+      } else if (source.type === locations.deck || source.type === locations.sideboard) {
+        // For deck/sideboard: Click toggles between deck and sideboard
+        applyCardClickOnDeckStack(source);
+      }
+    },
+    [selectCardByIndex, applyCardClickOnDeckStack]
+  );
+
   const onMoveCard = useCallback(
     async (event: any) => {
       const { active, over } = event;
 
-      //If drag and drop ends without a collision, eg outside the drag/drop area, do nothing
+      // If drag and drop ends without a collision, do nothing
       if (!over) {
         return;
       }
@@ -455,193 +132,96 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
       const source = active.data.current as DraftLocation;
       const target = over.data.current as DraftLocation;
 
-      if (source.equals(target) && source.type === locations.pack) {
-        // player dropped card back in the same location
+      // Case 1: Drop on the same location
+      if (source.equals(target)) {
         const dragTime = Date.now() - (dragStartTime ?? 0);
-
         if (dragTime < 200) {
-          return selectCardByIndex(source.index);
+          return handleSameLocationClick(source);
         }
-      } else if (source.equals(target) && (source.type === locations.deck || source.type === locations.sideboard)) {
-        //Clicking a card within the deck or sideboard should move it from one to the other
-        applyCardClickOnDeckStack(source);
-        return;
-      } else if (source.equals(target)) {
-        return;
+        return; // No action if it's a drag to the same place (not a click)
       }
 
+      // Case 2: Invalid target - can't drop onto a pack
       if (target.type === locations.pack) {
         return;
       }
 
+      // Case 3: Card from pack to deck/sideboard
       if (source.type === locations.pack) {
-        //Dragged a card from the pack to the deck or sideboard (the latter is off)
-        if (target.type === locations.deck || target.type === locations.sideboard) {
-          makePick(source.index, target.type, target.row, target.col);
-        }
-
-        return;
+        return handlePackToDeck(source, target);
       }
 
-      //Otherwise the drag had nothing to do with the pack
-      moveCardBetweenDeckStacks(source, target);
+      // Case 4: Card between deck and sideboard
+      return handleDeckToSideboard(source, target);
     },
-    [applyCardClickOnDeckStack, dragStartTime, makePick, moveCardBetweenDeckStacks, selectCardByIndex],
+    [dragStartTime, handleSameLocationClick, handlePackToDeck, handleDeckToSideboard]
   );
-
-  // this is the auto-pick logic
-  useEffect(() => {
-    if (
-      state.stepQueue[0] &&
-      (state.stepQueue[0].action === 'pickrandom' || state.stepQueue[0].action === 'trashrandom') &&
-      state.seats[0].pack.length > 0 &&
-      !draftState.loading
-    ) {
-      setDraftState((prev) => ({ ...prev, loading: true }));
-      setTimeout(() => {
-        //Automatically select a card from the pack, by picking a random index position within the available card pack
-        selectCardByIndex(Math.floor(Math.random() * state.seats[0].pack.length));
-      }, 1000);
-    }
-  }, [selectCardByIndex, draftState.loading, state.stepQueue, state.seats]);
-
-  // P1P1 ratings fetch necessary, the rest come via makePick
-  useEffect(() => {
-    const fetchInitialRatings = async () => {
-      if (state?.seats?.[0]?.pack?.length > 0 && !ratings.length) {
-        const request = {
-          state,
-          packCards: state.seats[0].pack.map((index) => ({
-            index,
-            oracle_id: draft.cards[index]?.details?.oracle_id || '',
-          }))
-        };
-        await getPredictions(request);
-      }
-    };
-
-    fetchInitialRatings();
-  }, [draft.cards, state, getPredictions, ratings]);
-
-  const packTitle: string = useMemo(() => {
-    const nextStep = state.stepQueue[0];
-
-    if (draftState.loading) {
-      if (state.stepQueue.length <= 1) {
-        return 'Finishing up draft...';
-      }
-
-      return 'Waiting for next pack...';
-    }
-
-    if (draftState.endDraftError) {
-      return 'Draft completion failed. Please retry.';
-    }
-
-    switch (nextStep.action) {
-      case 'pick':
-        return `Pack ${state.pack} Pick ${state.pick}: Pick ${nextStep.amount} card${nextStep.amount && nextStep.amount > 1 ? 's' : ''}`;
-      case 'trash':
-        return `Pack ${state.pack} Pick ${state.pick}: Trash ${nextStep.amount} card${nextStep.amount && nextStep.amount > 1 ? 's' : ''}`;
-      case 'endpack':
-        return 'Waiting for next pack to open...';
-      case 'pickrandom':
-        return 'Picking random selection...';
-      case 'trashrandom':
-        return 'Trashing random selection...';
-      default:
-        return '';
-    }
-  }, [state, draftState.loading, draftState.endDraftError]);
-
-  const disabled = state.stepQueue[0].action === 'pickrandom' || 
-                state.stepQueue[0].action === 'trashrandom' || 
-                draftState.predictError || 
-                draftState.predictionsLoading;
 
   return (
     <>
-      {/* Load our drag overlay fix CSS */}
       <link rel="stylesheet" href="/css/drag-overlay-fix.css" />
-      
       <MainLayout loginCallback={loginCallback}>
         <DisplayContextProvider cubeID={cube.id}>
           <CubeLayout cube={cube} activeLink="playtest">
-            <DndContext 
-              onDragEnd={onMoveCard} 
-              onDragStart={(event) => {
-                setDragStartTime(Date.now());
-                // Find the card that's being dragged
-                const source = event.active.data.current as DraftLocation;
-                if (source.type === locations.pack) {
-                  const cardIndex = state.seats[0].pack[source.index];
-                  setActiveCard({ card: createSafeCard(draft.cards[cardIndex]) });
-                } else {
-                  const { board } = getLocationReferences(source.type);
-                  const cardIndex = board[source.row][source.col][source.index];
-                  setActiveCard({ card: createSafeCard(draft.cards[cardIndex]) });
-                }
-              }}
-            >
-              <div className="relative">
-                {state?.seats?.[0]?.pack?.length > 0 ? (
-                  <Pack
-                    pack={state.seats[0].pack.map((index) => createSafeCard(draft.cards[index]))}
-                    loading={draftState.loading}
-                    loadingPredictions={draftState.predictionsLoading}
-                    title={packTitle}
-                    disabled={disabled}
-                    ratings={ratings}
-                    error={draftState.predictError}
-                    onRetry={handleRetryPredict}
-                    retryInProgress={draftState.retryInProgress}
-                    endDraftError={draftState.endDraftError}
-                    onEndDraft={endDraft}
-                    onPickMade={(cardIndex) => {
-                      if (cardIndex === undefined || state.seats[0].pack.length <= cardIndex) {
-                        console.error('Invalid card index for pick:', cardIndex);
-                        return;
-                      }
-                      console.log('Direct pick made for card index:', cardIndex);
-                      
-                      // Get the card and determine where to put it
-                      const cardIndex2 = state.seats[0].pack[cardIndex];
-                      const card = draft.cards[cardIndex2];
-                      const { row, col } = getCardDefaultRowColumn(card);
-                      
-                      // Make the pick into the mainboard
-                      makePick(cardIndex, locations.deck, row, col);
-                    }}
+            <AnimationProvider>
+              <FadeOverlay fadeTransition={fadeTransition} />
+              <DraftHeader />
+              <DndContext 
+                onDragEnd={onMoveCard} 
+                onDragStart={(event) => {
+                  setDragStartTime(Date.now());
+                  // Find the card that's being dragged
+                  const source = event.active.data.current as DraftLocation;
+                  if (source.type === locations.pack) {
+                    const cardIndex = state.seats[0].pack[source.index];
+                    setActiveCard({ card: createSafeCard(draft.cards[cardIndex]) });
+                  } else {
+                    const { board } = getLocationReferences(source.type);
+                    const cardIndex = board[source.row][source.col][source.index];
+                    setActiveCard({ card: createSafeCard(draft.cards[cardIndex]) });
+                  }
+                }}
+              >
+                <div className="relative">
+                  {state?.seats?.[0]?.pack?.length > 0 ? (
+                    <Pack
+                      pack={state.seats[0].pack.map((index) => createSafeCard(draft.cards[index]))}
+                      loading={draftLoading}
+                      loadingPredictions={predictionsLoading}
+                      title={packTitle}
+                      disabled={packDisabled}
+                      ratings={ratings}
+                      showRatings={showRatings}
+                      setShowRatings={setShowRatings}
+                      error={predictError}
+                      onRetry={handleRetryPredict}
+                      retryInProgress={retryInProgress}
+                      onPickMade={(cardIndex) => {
+                        if (cardIndex === undefined || state.seats[0].pack.length <= cardIndex) {
+                          console.error('Invalid card index for pick:', cardIndex);
+                          return;
+                        }
+                        
+                        // Get the card and determine where to put it
+                        const cardIndex2 = state.seats[0].pack[cardIndex];
+                        const card = draft.cards[cardIndex2];
+                        const { row, col } = getCardDefaultRowColumn(card);
+                        
+                        // Make the pick into the mainboard
+                        makePick(cardIndex, locations.deck, row, col);
+                      }}
+                    />
+                  ) : null}
+                  
+                  <DraftDeckArea 
+                    mainboard={mainboard}
+                    sideboard={sideboard}
+                    cards={draft.cards}
                   />
-                ) : draftState.endDraftError ? (
-                  <></>
-                ) : null}
-                <Card className="my-3">
-                  <DeckStacks
-                    cards={mainboard.map((row) => row.map((col) => col.map((index) => createSafeCard(draft.cards[index]))))}
-                    title="Mainboard"
-                    subtitle={makeSubtitle(mainboard.flat(3).map((index) => createSafeCard(draft.cards[index])))}
-                    locationType={locations.deck}
-                    xs={4}
-                    lg={8}
-                  />
-                  <DeckStacks
-                    cards={sideboard.map((row) => row.map((col) => col.map((index) => createSafeCard(draft.cards[index]))))}
-                    title="Sideboard"
-                    locationType={locations.sideboard}
-                    xs={4}
-                    lg={8}
-                  />
-                </Card>
-              </div>
-              <DragOverlay adjustScale={false} dropAnimation={null}>
-                {activeCard && (
-                  <div className="card-drag-overlay">
-                    <FoilCardImage card={activeCard.card} className="drag-card" />
-                  </div>
-                )}
-              </DragOverlay>
-            </DndContext>
+                </div>
+                <CardDragOverlay activeCard={activeCard} />
+              </DndContext>
+            </AnimationProvider>
           </CubeLayout>
         </DisplayContextProvider>
       </MainLayout>

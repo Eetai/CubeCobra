@@ -53,6 +53,12 @@ module.exports = {
         "card-colorless": "rgb(var(--card-colorless) / <alpha-value>)",
         "card-lands": "rgb(var(--card-lands) / <alpha-value>)",
       },
+      backfaceVisibility: {
+        'hidden': 'hidden',
+      },
+      transformStyle: {
+        '3d': 'preserve-3d',
+      },
     },
   },
   variants: {
@@ -164,5 +170,19 @@ module.exports = {
         },
       });
     },
+    function({ addUtilities }) {
+      const newUtilities = {
+        '.backface-hidden': {
+          'backface-visibility': 'hidden',
+        },
+        '.preserve-3d': {
+          'transform-style': 'preserve-3d',
+        },
+        '.perspective-1200px': {
+          'perspective': '1200px',
+        },
+      }
+      addUtilities(newUtilities)
+    }
   ],
 };

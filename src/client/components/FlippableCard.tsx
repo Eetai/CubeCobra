@@ -1,9 +1,12 @@
 import React from 'react';
-import { useSpring, animated as a } from '@react-spring/web';
+
+import { animated as a,useSpring } from '@react-spring/web';
+
 import Card from '../../datatypes/Card';
-import FoilCardImage from './FoilCardImage';
-import DraggableCard from './DraggableCard';
+import { useAnimations } from '../contexts/AnimationContext';
 import DraftLocation from '../drafting/DraftLocation';
+import DraggableCard from './DraggableCard';
+import FoilCardImage from './FoilCardImage';
 
 interface FlippableCardProps {
   card: Card;
@@ -28,8 +31,10 @@ const FlippableCard: React.FC<FlippableCardProps> = ({
   showRating = false,
   rating,
 }) => {
+  const { animationsEnabled } = useAnimations();
+
   // Spring animation configuration
-  const springConfig = {
+  const springConfig = animationsEnabled ? {
     from: { opacity: isFlipped ? 0 : 1, rotateY: isFlipped ? 0 : 180 },
     to: { opacity: isFlipped ? 1 : 0, rotateY: isFlipped ? 180 : 0 },
     config: { 
@@ -37,23 +42,75 @@ const FlippableCard: React.FC<FlippableCardProps> = ({
       friction: 65,
       clamp: true,
     },
+  } : {
+    // When animations are disabled, just toggle opacity instantly
+    from: { opacity: isFlipped ? 1 : 0, rotateY: isFlipped ? 180 : 0 },
+    to: { opacity: isFlipped ? 1 : 0, rotateY: isFlipped ? 180 : 0 },
+    config: { duration: 0 },
   };
 
   const { opacity, rotateY } = useSpring(springConfig);
+  
+  // Shared rating badge component to ensure consistency
+  const RatingBadge = () => {
+    if (rating === undefined || !showRating) return null;
+    
+    return (
+      <div 
+        className={`fixed-rating-badge ${isHighestRated ? 'highest-rated' : ''}`}
+        title={`Bot rates this card ${Math.round(rating * 100)}% for this pick`}
+      >
+        {Math.round(rating * 100)}%
+      </div>
+    );
+  };
+  
+  // When animations disabled, simply render either front or back based on isFlipped
+  if (!animationsEnabled) {
+    return (
+      <div className="relative w-full min-h-[196px]">
+        {!isFlipped ? (
+          <div className="w-full">
+            {previousCard ? (
+              <FoilCardImage card={previousCard} autocard />
+            ) : (
+              <FoilCardImage card={card} autocard />
+            )}
+          </div>
+        ) : (
+          <div className="relative w-full h-full">
+            <div className={`${isHighestRated && showRating ? 'ring-[5px] ring-offset-0 ring-[#007BFF] rounded-lg' : ''} w-full`}>
+              {disabled ? (
+                <FoilCardImage card={card} autocard />
+              ) : (
+                location && 
+                <DraggableCard 
+                  location={location} 
+                  data-index={index} 
+                  card={card} 
+                />
+              )}
+            </div>
+            
+            {/* Use shared rating badge */}
+            {rating !== undefined && showRating && <RatingBadge />}
+          </div>
+        )}
+      </div>
+    );
+  }
 
+  // Original animated version when animations are enabled
   return (
     <div 
-      className="relative w-full" 
-      style={{ minHeight: '196px', perspective: '1200px' }}
+      className="relative w-full min-h-[196px] perspective-[1200px]"
     >
       {/* Front side - previous card (or same card if no previous) */}
       <a.div
-        className="absolute w-full h-full"
+        className="absolute w-full h-full backface-hidden preserve-3d"
         style={{
           opacity: opacity.to(o => 1 - o),
           transform: rotateY.to(r => `perspective(1200px) rotateY(${r}deg)`),
-          backfaceVisibility: 'hidden',
-          transformStyle: 'preserve-3d',
           zIndex: isFlipped ? 0 : 1,
           pointerEvents: isFlipped ? 'none' : 'auto',
         }}
@@ -67,18 +124,16 @@ const FlippableCard: React.FC<FlippableCardProps> = ({
 
       {/* Back side - new card */}
       <a.div
-        className="absolute w-full h-full"
+        className="absolute w-full h-full backface-hidden preserve-3d"
         style={{
           opacity,
           transform: rotateY.to(r => `perspective(1200px) rotateY(${r + 180}deg)`),
-          backfaceVisibility: 'hidden',
-          transformStyle: 'preserve-3d',
           zIndex: isFlipped ? 1 : 0,
           pointerEvents: isFlipped ? 'auto' : 'none',
         }}
       >
         <div className="relative w-full h-full">
-          <div className={`${isHighestRated && showRating ? 'ring-[5px] ring-offset-0 ring-[#007BFF] rounded-lg' : ''} w-full`}>
+          <div className={`${isHighestRated && showRating ? 'ring-[5px] ring-offset-0 ring-[#007BFF] rounded-lg' : ''} w-full card-image-wrapper`}>
             {disabled ? (
               <FoilCardImage card={card} autocard />
             ) : (
@@ -91,23 +146,8 @@ const FlippableCard: React.FC<FlippableCardProps> = ({
             )}
           </div>
           
-          {/* Rating badge */}
-          {rating !== undefined && showRating && (
-            <div 
-              className={`absolute bottom-2 left-1/2 -translate-x-1/2 
-                ${isHighestRated 
-                  ? 'bg-gradient-to-r from-blue-600/95 to-blue-500/95' 
-                  : 'bg-gradient-to-r from-gray-800/80 to-gray-700/80'
-                } 
-                text-white px-2 py-[2px] rounded-md text-xxs font-semibold 
-                tracking-tight text-shadow w-16 text-center backdrop-blur-sm
-                transition-all duration-200 transform ${isHighestRated ? 'scale-110' : ''}`}
-              title={`Bot rates this card ${Math.round(rating * 100)}% for this pick`}
-              style={{ zIndex: 10, boxShadow: '0 2px 4px rgba(0,0,0,0.25)' }}
-            >
-              {Math.round(rating * 100)}%
-            </div>
-          )}
+          {/* Use shared rating badge */}
+          {rating !== undefined && showRating && <RatingBadge />}
         </div>
       </a.div>
     </div>

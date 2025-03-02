@@ -1,12 +1,13 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useMemo,useState } from 'react';
+
 import CardType from '../../datatypes/Card';
+import { useAnimations } from '../contexts/AnimationContext';
 import DraftLocation from '../drafting/DraftLocation';
+import { createSafeCard,prefetchImages } from '../utils/prefetchUtil';
 import Button from './base/Button';
 import { Card, CardBody, CardHeader } from './base/Card';
-import { Col, Row } from './base/Layout';
 import Text from './base/Text';
 import FlippableCard from './FlippableCard';
-import { prefetchImages, createSafeCard } from '../utils/prefetchUtil';
 
 interface PackProps {
   pack: CardType[];
@@ -15,12 +16,12 @@ interface PackProps {
   title?: string;
   disabled?: boolean;
   ratings?: number[];
+  showRatings?: boolean;
+  setShowRatings?: (show: boolean) => void;
   error?: boolean;
   onRetry?: () => void;
   onPickMade?: (cardIndex?: number) => void;  // Make cardIndex optional
   retryInProgress?: boolean;
-  endDraftError?: boolean;
-  onEndDraft?: () => void;
 }
 
 const Pack: React.FC<PackProps> = ({ 
@@ -29,16 +30,16 @@ const Pack: React.FC<PackProps> = ({
   loadingPredictions = false,
   title = 'Pack', 
   disabled = false, 
-  ratings,
+  ratings = [],
+  showRatings = false,
+  setShowRatings = () => {},
   error = false,
   onRetry,
   retryInProgress = false,
-  endDraftError,
-  onEndDraft,
   onPickMade
 }) => {
-  const [showRatings, setShowRatings] = useState(false);
-  const maxRating = ratings ? Math.max(...ratings) : 0;
+  const { animationsEnabled } = useAnimations();
+  const maxRating = ratings ? Math.max(...ratings, 0) : 0;
   
   // Add state to track current pack and animation state
   const [visiblePack, setVisiblePack] = useState<CardType[]>([]);
@@ -52,6 +53,9 @@ const Pack: React.FC<PackProps> = ({
   
   // Add state to track if we're showing default cards
   const [showingDefaultCards, setShowingDefaultCards] = useState(false);
+  
+  // Use the isNewPack state to determine the behavior, but we need to modify how we update it:
+  const [isNewPack, setIsNewPack] = useState(true);
   
   const packChanged = useMemo(() => {
     if (pack.length !== visiblePack.length) return true;
@@ -68,13 +72,12 @@ const Pack: React.FC<PackProps> = ({
         ...card.details,
         image_normal: '/content/default_card.png',
         name: 'Card',
-        // Add these required fields for cardType function
         type_line: card?.type_line || 'Unknown Type',
         colors: card.details?.colors || [],
         cmc: card.details?.cmc || 0,
         scryfall_id: card.details?.scryfall_id || `default-${Math.random().toString(36).substring(2)}`,
       }
-    })) as CardType[]; // Explicitly cast to CardType[]
+    })) as CardType[]; 
   }, [pack]);
   
   // Process cards to ensure they have all necessary properties
@@ -93,6 +96,7 @@ const Pack: React.FC<PackProps> = ({
       setVisiblePack([]);
       setImagesLoaded(true);
       setShowingDefaultCards(false);
+      setIsNewPack(true); // Next pack will be a new one
       return;
     }
     
@@ -101,23 +105,39 @@ const Pack: React.FC<PackProps> = ({
       setImagesLoaded(false);
       setLoadingImages(true);
       
-      // First show default cards
-      setPreviousPack([]);
-      setVisiblePack(defaultCards);
-      setShowingDefaultCards(true);
-      
-      // All cards start as not flipped
-      setCardsFlipped(new Array(pack.length).fill(false));
+      // Only show default cards if it's a new pack vs. just new picks
+      if (isNewPack) {
+        // This is a brand new pack, show defaults first
+        setPreviousPack([]);
+        setVisiblePack(defaultCards);
+        setShowingDefaultCards(true);
+        
+        // All cards start as not flipped
+        setCardsFlipped(new Array(pack.length).fill(false));
+      } else {
+        // This is just a regular pick, keep the previous pack visible
+        setPreviousPack(visiblePack);
+        setShowingDefaultCards(false);
+        
+        // All cards start as not flipped to show previous state
+        setCardsFlipped(new Array(pack.length).fill(false));
+      }
       
       // Preload the real card images
       const imageUrls = pack.map(card => card.details?.image_normal).filter(Boolean);
       prefetchImages(imageUrls as string[]).then(() => {
         // After images are loaded, update to the real pack but keep cards unflipped
-        setPreviousPack(defaultCards);
+        if (isNewPack) {
+          // For a new pack, we're flipping from default to real
+          setPreviousPack(defaultCards);
+        }
+        // Otherwise previousPack is already set to the old visiblePack
+        
         setVisiblePack(pack);
         setImagesLoaded(true);
         setLoadingImages(false);
         setShowingDefaultCards(false);
+        setIsNewPack(false); // Mark that we've loaded this pack
         
         // Flip the cards one by one with a delay
         const flipCards = async () => {
@@ -134,36 +154,47 @@ const Pack: React.FC<PackProps> = ({
         flipCards();
       });
     }
-  }, [packChanged, pack, visiblePack, pickInProgress, defaultCards]);
+  }, [packChanged, pack, visiblePack, pickInProgress, defaultCards, isNewPack]);
 
+  // Initialize the pack in a flipped state when animations are disabled
   useEffect(() => {
-    setShowRatings(false);
-  }, [pack]);
+    // If animations are disabled, show all cards immediately 
+    if (!animationsEnabled) {
+      setCardsFlipped(pack.map(() => true));
+      return; 
+    }
+
+    // The existing staggered flip animation logic for when animations are enabled
+    if (pack.length > 0) {
+      const timeoutIds: NodeJS.Timeout[] = [];
+      const flipAll = () => {
+        for (let i = 0; i < pack.length; i++) {
+          if (!cardsFlipped[i]) {
+            const timeoutId = setTimeout(() => {
+              setCardsFlipped((oldFlipped) => {
+                const newFlipped = [...oldFlipped];
+                newFlipped[i] = true;
+                return newFlipped;
+              });
+            }, 100 * i);
+            timeoutIds.push(timeoutId);
+          }
+        }
+      };
+
+      // Flip all the cards
+      flipAll();
+
+      return () => {
+        for (const timeoutId of timeoutIds) {
+          clearTimeout(timeoutId);
+        }
+      };
+    }
+  }, [pack, animationsEnabled]); // Added animationsEnabled as a dependency
 
   // Determine if we should show the loading spinner
   const isLoading = loading || loadingImages || (!imagesLoaded && pack.length > 0);
-
-  // // Make this handler more straightforward and debug it
-  // const handleCardClick = (cardIndex: number): void => {
-  //   console.log(`Pack: handleCardClick called for card index ${cardIndex}`);
-    
-  //   if (disabled) {
-  //     console.log('Pack: Click ignored because component is disabled');
-  //     return;
-  //   }
-    
-  //   setPickInProgress(true);
-    
-  //   if (onPickMade) {
-  //     console.log(`Pack: Executing onPickMade with index ${cardIndex}`);
-  //     // Add a slight delay to ensure the UI isn't interrupted
-  //     setTimeout(() => {
-  //       onPickMade(cardIndex);
-  //     }, 10);
-  //   } else {
-  //     console.log('Pack: onPickMade function is not defined');
-  //   }
-  // };
 
   // Reset the pickInProgress flag when pack changes entirely (new pack is dealt)
   useEffect(() => {
@@ -181,42 +212,54 @@ const Pack: React.FC<PackProps> = ({
     return undefined;
   };
 
+  // When we detect a new pack, update our isNewPack flag
+  useEffect(() => {
+    if (packChanged) {
+      // It's a new pack if:
+      // 1. The previous pack was empty and this one has cards (first pack or new pack after empty)
+      // 2. The number of cards is higher than before (which indicates a new pack vs a pick)
+      const isStartingNewPack = 
+        (visiblePack.length === 0 && pack.length > 0) || // First pack or after empty
+        (pack.length > visiblePack.length); // More cards than before = new pack
+        
+      setIsNewPack(isStartingNewPack);
+    }
+  }, [packChanged, pack.length, visiblePack.length]);
+
   return (
     <Card className="mt-3">
       <CardHeader className="flex justify-between items-center">
         <Text semibold lg>
           {title}
         </Text>
-        {error ? (
-          <Button
-            onClick={onRetry}
-            color="danger"
-            disabled={retryInProgress}
-          >
-            {retryInProgress ? 'Retrying...' : 'Bot picks failed. Try again?'}
-          </Button>
-        ) : loadingPredictions ? (
-          <Button
-            color="secondary"
-            disabled
-          >
-            Making Bot Picks...
-          </Button>
-        ) : (
-          ratings && ratings.length > 0 && !showRatings && imagesLoaded && (
+        
+        <div className="flex items-center gap-2">
+          {error ? (
             <Button
-              onClick={() => setShowRatings(true)}
-              color="primary"
+              onClick={onRetry}
+              color="danger"
+              disabled={retryInProgress}
             >
-              Show CubeCobra Bot Ratings
+              {retryInProgress ? 'Retrying...' : 'Bot picks failed. Try again?'}
             </Button>
-          )
-        )}
-        {endDraftError && (
-          <Button color="danger" onClick={onEndDraft} disabled={loading}>
-            Retry End Draft
-          </Button>
-        )}
+          ) : loadingPredictions ? (
+            <Button
+              color="secondary"
+              disabled
+            >
+              Making Bot Picks...
+            </Button>
+          ) : (
+            ratings && ratings.length > 0 && imagesLoaded && (
+              <Button
+                onClick={() => setShowRatings(!showRatings)}
+                color={showRatings ? "secondary" : "primary"}
+              >
+                {showRatings ? 'Hide Bot Ratings' : 'Show CubeCobra Bot Ratings'}
+              </Button>
+            )
+          )}
+        </div>
       </CardHeader>
       <CardBody>
         {isLoading ? (
@@ -227,46 +270,35 @@ const Pack: React.FC<PackProps> = ({
             </div>
           </div>
         ) : (
-          // Change the way we handle card clicks - much simpler approach
-          <Row className="g-0" sm={4} lg={8}>
+          <div className="pack-cards-grid">
             {processedPack.map((card, cardIndex) => {
               const isHighestRated = ratings && ratings[cardIndex] === maxRating;
               const previousCard = getPreviousCard(cardIndex);
-              
               return (
-                <Col
+                <div 
                   key={`pack-${card.details?.scryfall_id || cardIndex}-${cardIndex}`}
-                  xs={1}
-                  className="col-md-1-5 col-lg-1-5 col-xl-1-5 p-1 d-flex justify-content-center align-items-center"
+                  className="pack-card-item" 
+                  onMouseUp={() => {
+                    if (!disabled && cardsFlipped[cardIndex]) {
+                      onPickMade?.(cardIndex);
+                    }
+                  }}
                 >
-                  {/* Simple wrapper div that handles the click */}
-                  <div 
-                    className="w-full mb-6 cursor-pointer" 
-                    onClick={() => {
-                      // Only allow clicks when the card is flipped and not disabled
-                      if (!disabled && cardsFlipped[cardIndex]) {
-                        console.log(`Direct click on wrapper div for card ${cardIndex}`);
-                        onPickMade?.(cardIndex);
-                      }
-                    }}
-                  >
-                    <FlippableCard
-                      card={card}
-                      previousCard={previousCard}
-                      location={DraftLocation.pack(cardIndex)}
-                      isFlipped={cardsFlipped[cardIndex] || false}
-                      disabled={disabled || error || showingDefaultCards}
-                      index={cardIndex}
-                      isHighestRated={isHighestRated}
-                      showRating={showRatings && !showingDefaultCards}
-                       rating={ratings ? ratings[cardIndex] : undefined}
-                      // No onFlipped prop - we don't want FlippableCard to handle clicks
-                    />
-                  </div>
-                </Col>
+                  <FlippableCard
+                    card={card}
+                    previousCard={previousCard}
+                    location={DraftLocation.pack(cardIndex)}
+                    isFlipped={cardsFlipped[cardIndex] || false}
+                    disabled={disabled || error || showingDefaultCards}
+                    index={cardIndex}
+                    isHighestRated={isHighestRated}
+                    showRating={showRatings && !showingDefaultCards}
+                    rating={ratings ? ratings[cardIndex] : undefined}
+                  />
+                </div>
               );
             })}
-          </Row>
+          </div>
         )}
       </CardBody>
     </Card>
