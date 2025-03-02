@@ -1,3 +1,13 @@
+/* Define consistent variables for card sizing */
+:root {
+  --card-width: 140px;
+  --card-min-height: 215px; /* Back to fixed height that worked */
+  --card-aspect-ratio: 63/88;
+  --card-grid-gap: 16px;
+  --card-margin-bottom: 8px;
+  --card-container-padding: 8px;
+}
+
 /* Base drag overlay styles */
 [data-dnd-overlay="true"] {
   pointer-events: none;
@@ -20,74 +30,42 @@
 }
 
 .card-drag-overlay {
-  width: 140px;
+  width: var(--card-width);
   pointer-events: none;
   z-index: 9999;
   opacity: 0.8;
   box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
 }
 
-/* Ensure consistent spacing in pack cards grid regardless of animation state */
+/* Clean base grid layout */
 .pack-cards-grid {
-  display: grid !important;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important;
-  gap: 8px !important; /* Force consistent gap */
-  width: 100% !important;
-  padding: 8px !important;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-width), 1fr));
+  gap: var(--card-grid-gap) !important;
+  width: 100%;
+  padding: var(--card-container-padding) !important;
 }
 
-/* Remove any overrides that might change the gap */
-body:has(#toggle-animations:checked) .pack-cards-grid,
-.animations-disabled .pack-cards-grid {
-  gap: 8px !important; /* Ensure this is always 16px */
-}
-
-/* Make sure other styles don't override our consistent spacing */
+/* Card item sizing - consistent across states */
 .pack-card-item {
-  margin-bottom: 8px !important;
-  width: 140px !important;
-  max-width: 140px !important;
+  width: 100%;
+  margin-bottom: var(--card-margin-bottom);
+  height: var(--card-min-height) !important;
+  min-height: var(--card-min-height) !important;
+  max-height: var(--card-min-height) !important;
 }
 
-/* Ensure images maintain consistent size regardless of animations state */
-img.card-img {
-  width: 140px !important;
-  max-width: 140px !important;
-  height: auto !important;
-  aspect-ratio: 63 / 88 !important;
-  object-fit: contain !important;
-}
-
-/* Simple fix to ensure margins are consistent */
-.card-image-wrapper {
-  margin-bottom: 0 !important;
-}
-
-/* Fix transitions to ensure they don't cause layout shifts */
-div[style*="transform:"] {
-  margin-bottom: 0 !important;
-}
-
-/* Ensure consistent spacing in flippable cards */
-.perspective-\[1200px\] {
-  margin-bottom: 0 !important;
-}
-
-/* Reset any special styles that might be applied for non-animations */
-body:has(#toggle-animations:checked) div[style*="transform:"],
-.animations-disabled div[style*="transform:"] {
-  margin-bottom: 0 !important;
-}
-
-/* Card container styles */
+/* Container for all cards */
 .card-container {
   position: relative;
   width: 100%;
-  min-height: 196px;
+  min-height: var(--card-min-height);
   perspective: 1200px;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--card-margin-bottom);
+  height: var(--card-min-height) !important;
 }
 
+/* Card structure elements */
 .card-inner {
   position: relative;
   width: 100%;
@@ -99,44 +77,131 @@ body:has(#toggle-animations:checked) div[style*="transform:"],
   position: absolute;
   width: 100%;
   height: 100%;
+  min-height: var(--card-min-height);
   backface-visibility: hidden;
-  min-height: 196px;
 }
 
-/* Rating badges */
+/* Image sizing with consistent aspect ratio */
+img.card-img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: var(--card-aspect-ratio);
+  object-fit: contain;
+}
+
+/* Animation-specific styles */
+body:not(:has(#toggle-animations:checked)) .card-inner,
+:not(.animations-disabled) .card-inner {
+  transform-style: preserve-3d;
+}
+
+.perspective-\[1200px\] {
+  min-height: var(--card-min-height);
+  width: 100%;
+  margin-bottom: 0;
+}
+
+/* Card image wrapper */
+.card-image-wrapper {
+  position: relative;
+  width: 100%;
+  margin-bottom: 0;
+  height: var(--card-min-height) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+/* Rating badge styling - simplified to single class */
 .fixed-rating-badge {
-  position: absolute;
-  bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 50;
-  min-width: 2.5rem;
-  padding: 2px 8px;
-  border-radius: 0.375rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-  text-align: center;
-  color: white;
-  text-shadow: 0px 1px 2px rgba(0,0,0,0.5);
-  background-color: rgba(55, 65, 81, 0.8);
-  backdrop-filter: blur(2px);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
-  white-space: nowrap;
-  pointer-events: none;
+  position: absolute !important;
+  bottom: 16px !important; /* Increased from 8px to move badge up */
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  z-index: 999 !important; /* Ensure it's always on top */
+  min-width: 2.5rem !important;
+  padding: 0.125rem 0.5rem !important;
+  text-align: center !important;
+  font-size: 0.875rem !important;
+  font-weight: 600 !important;
+  color: white !important;
+  border-radius: 0.375rem !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1) !important;
+  backdrop-filter: blur(2px) !important;
+  white-space: nowrap !important;
+  pointer-events: none !important;
+  background-color: rgba(55, 65, 81, 0.8) !important;
 }
 
+/* Add back styling for highest-rated badge */
 .fixed-rating-badge.highest-rated {
-  background-color: rgba(0, 123, 255, 0.95);
-  font-weight: 700;
-  transform: translateX(-50%) scale(1.05);
-  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  background-color: rgba(0, 123, 255, 0.95) !important; /* Blue background */
+  font-weight: 700 !important;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2) !important;
 }
 
-/* Animation disabled state */
-.animations-disabled .pack-cards-grid {
-  gap: 16px;
+/* Ensure highest-rated card styling through CardGrid compatibility */
+.ring-\[\#007BFF\] ~ .fixed-rating-badge,
+.ring-\[\#087715\] ~ .fixed-rating-badge {
+  background-color: rgba(0, 123, 255, 0.95) !important;
+  font-weight: 700 !important;
 }
 
-.animations-disabled .card-container {
-  margin-bottom: 0.5rem;
+/* Stacked cards in deck area */
+.stacked {
+  margin-top: -124%;
+  min-height: var(--card-min-height);
+}
+
+/* Prevent unwanted transitions that could impact spacing */
+.card-inner,
+.card-face,
+.card-image-wrapper,
+.pack-card-item {
+  transition: none !important;
+}
+
+/* Force animated divs to have exact same height */
+a.div.absolute.w-full.h-full.backface-hidden.preserve-3d,
+div.absolute.w-full.h-full.backface-hidden.preserve-3d {
+  height: var(--card-min-height) !important;
+}
+
+/* Target the specific a.div from react-spring that might have different sizing */
+[style*="transform: perspective"] {
+  height: var(--card-min-height) !important;
+}
+
+/* Fix for badge placement in non-animated state */
+body:has(#toggle-animations:checked) .fixed-rating-badge,
+.animations-disabled .fixed-rating-badge {
+  bottom: 16px !important;
+}
+
+/* Fix for badge placement in animated state */
+body:not(:has(#toggle-animations:checked)) .fixed-rating-badge,
+:not(.animations-disabled) .fixed-rating-badge {
+  bottom: 16px !important;
+}
+
+/* Add positioning context for badge container */
+.card-image-wrapper, 
+.relative.w-full.h-full,
+.relative.w-full.min-h-\[196px\] {
+  position: relative !important;
+}
+
+/* Ensure badges have proper positioning for all children containers */
+.perspective-\[1200px\] .fixed-rating-badge,
+.card-image-wrapper .fixed-rating-badge,
+.relative.w-full.h-full .fixed-rating-badge {
+  bottom: 16px !important;
+}
+
+/* Force consistent sizing for badge container to prevent any shifts */
+.perspective-\[1200px\], 
+.card-image-wrapper, 
+.relative.w-full.h-full {
+  height: var(--card-min-height) !important;
+  min-height: var(--card-min-height) !important;
 }

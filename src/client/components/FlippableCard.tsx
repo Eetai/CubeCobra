@@ -1,7 +1,5 @@
 import React from 'react';
-
-import { animated as a,useSpring } from '@react-spring/web';
-
+import { animated as a, useSpring } from '@react-spring/web';
 import Card from '../../datatypes/Card';
 import { useAnimations } from '../contexts/AnimationContext';
 import DraftLocation from '../drafting/DraftLocation';
@@ -33,25 +31,7 @@ const FlippableCard: React.FC<FlippableCardProps> = ({
 }) => {
   const { animationsEnabled } = useAnimations();
 
-  // Spring animation configuration
-  const springConfig = animationsEnabled ? {
-    from: { opacity: isFlipped ? 0 : 1, rotateY: isFlipped ? 0 : 180 },
-    to: { opacity: isFlipped ? 1 : 0, rotateY: isFlipped ? 180 : 0 },
-    config: { 
-      tension: 550,
-      friction: 65,
-      clamp: true,
-    },
-  } : {
-    // When animations are disabled, just toggle opacity instantly
-    from: { opacity: isFlipped ? 1 : 0, rotateY: isFlipped ? 180 : 0 },
-    to: { opacity: isFlipped ? 1 : 0, rotateY: isFlipped ? 180 : 0 },
-    config: { duration: 0 },
-  };
-
-  const { opacity, rotateY } = useSpring(springConfig);
-  
-  // Shared rating badge component to ensure consistency
+  // Shared rating badge component to ensure consistency in both modes
   const RatingBadge = () => {
     if (rating === undefined || !showRating) return null;
     
@@ -65,23 +45,25 @@ const FlippableCard: React.FC<FlippableCardProps> = ({
     );
   };
   
-  // When animations disabled, simply render either front or back based on isFlipped
+
+  // When animations disabled, render a simpler version with consistent styling
   if (!animationsEnabled) {
     return (
       <div className="relative w-full min-h-[196px]">
         {!isFlipped ? (
-          <div className="w-full">
-            {previousCard ? (
-              <FoilCardImage card={previousCard} autocard />
-            ) : (
-              <FoilCardImage card={card} autocard />
-            )}
+          <div className="card-image-wrapper w-full">
+            <FoilCardImage 
+              card={previousCard || card} 
+              autocard 
+            />
           </div>
         ) : (
           <div className="relative w-full h-full">
-            <div className={`${isHighestRated && showRating ? 'ring-[5px] ring-offset-0 ring-[#007BFF] rounded-lg' : ''} w-full`}>
               {disabled ? (
-                <FoilCardImage card={card} autocard />
+                <FoilCardImage 
+                  card={card} 
+                  autocard 
+                />
               ) : (
                 location && 
                 <DraggableCard 
@@ -90,22 +72,29 @@ const FlippableCard: React.FC<FlippableCardProps> = ({
                   card={card} 
                 />
               )}
-            </div>
-            
-            {/* Use shared rating badge */}
-            {rating !== undefined && showRating && <RatingBadge />}
+            <RatingBadge />
           </div>
         )}
       </div>
     );
   }
 
-  // Original animated version when animations are enabled
+  // Animated version with spring animations
+  const springConfig = {
+    from: { opacity: isFlipped ? 0 : 1, rotateY: isFlipped ? 0 : 180 },
+    to: { opacity: isFlipped ? 1 : 0, rotateY: isFlipped ? 180 : 0 },
+    config: { 
+      tension: 550,
+      friction: 65,
+      clamp: true,
+    },
+  };
+
+  const { opacity, rotateY } = useSpring(springConfig);
+
   return (
-    <div 
-      className="relative w-full min-h-[196px] perspective-[1200px]"
-    >
-      {/* Front side - previous card (or same card if no previous) */}
+    <div className="relative w-full min-h-[196px] perspective-[1200px]">
+      {/* Front side */}
       <a.div
         className="absolute w-full h-full backface-hidden preserve-3d"
         style={{
@@ -115,14 +104,15 @@ const FlippableCard: React.FC<FlippableCardProps> = ({
           pointerEvents: isFlipped ? 'none' : 'auto',
         }}
       >
-        {previousCard ? (
-          <FoilCardImage card={previousCard} autocard />
-        ) : (
-          <FoilCardImage card={card} autocard />
-        )}
+        <div className="card-image-wrapper">
+          <FoilCardImage 
+            card={previousCard || card} 
+            autocard 
+          />
+        </div>
       </a.div>
 
-      {/* Back side - new card */}
+      {/* Back side */}
       <a.div
         className="absolute w-full h-full backface-hidden preserve-3d"
         style={{
@@ -133,9 +123,11 @@ const FlippableCard: React.FC<FlippableCardProps> = ({
         }}
       >
         <div className="relative w-full h-full">
-          <div className={`${isHighestRated && showRating ? 'ring-[5px] ring-offset-0 ring-[#007BFF] rounded-lg' : ''} w-full card-image-wrapper`}>
             {disabled ? (
-              <FoilCardImage card={card} autocard />
+              <FoilCardImage 
+                card={card} 
+                autocard 
+              />
             ) : (
               location && 
               <DraggableCard 
@@ -144,10 +136,7 @@ const FlippableCard: React.FC<FlippableCardProps> = ({
                 card={card} 
               />
             )}
-          </div>
-          
-          {/* Use shared rating badge */}
-          {rating !== undefined && showRating && <RatingBadge />}
+          <RatingBadge />
         </div>
       </a.div>
     </div>
