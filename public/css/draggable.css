@@ -1,7 +1,0 @@
-
-/* Add this to your CSS file */
-.dnd-kit-drag-overlay {
-  /* Center the dragged element under cursor */
-  cursor: grabbing;
-  transform: translate(-50%, -50%) !important;
-}

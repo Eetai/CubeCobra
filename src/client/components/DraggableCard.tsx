@@ -10,9 +10,20 @@ interface DraggableCardProps {
   location: DraftLocation;
   className?: string;
   onClick?: () => void;
+  showRating?: boolean;
+  rating?: number;
+  isHighestRated?: boolean;
 }
 
-const DraggableCard: React.FC<DraggableCardProps> = ({ card, location, className = '', onClick }) => {
+const DraggableCard: React.FC<DraggableCardProps> = ({ 
+  card, 
+  location, 
+  className = '', 
+  onClick,
+  showRating = false,
+  rating,
+  isHighestRated = false,
+}) => {
   const {
     attributes,
     listeners,
@@ -31,35 +42,63 @@ const DraggableCard: React.FC<DraggableCardProps> = ({ card, location, className
   const previewClasses = classNames({ outline: isOver, transparent: isDragging }, className);
 
   const handleClick = (e: React.MouseEvent) => {
-    if (!isDragging && onClick) {
+    if (onClick) {
       e.preventDefault();
       e.stopPropagation();
-      console.log('DraggableCard: direct click detected');
       onClick();
     }
   };
 
+  // Define these styles directly to ensure they're applied
+  const badgeStyles = {
+    position: 'absolute',
+    bottom: '10px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 9999,
+    backgroundColor: isHighestRated ? 'rgba(0, 123, 255, 0.95)' : 'rgba(55, 65, 81, 0.9)',
+    color: 'white',
+    padding: '3px 8px',
+    borderRadius: '4px',
+    fontSize: '14px',
+    fontWeight: isHighestRated ? 700 : 600,
+    textAlign: 'center',
+    minWidth: '40px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+    whiteSpace: 'nowrap',
+    pointerEvents: 'none',
+    display: 'block',
+  } as React.CSSProperties;
+
   return (
     <div
       ref={setDragRef}
-      className={classNames('no-touch-action w-full', { 'cursor-pointer': !!onClick })}
-      {...(isDragging ? {} : listeners)}
+      className="no-touch-action position-relative"
+      style={{ position: 'relative', width: '100%' }} // Force position: relative
+      {...listeners}
       {...attributes}
       onClick={handleClick}
       role="button"
       tabIndex={0}
     >
       <div 
-        ref={setDropRef} 
-        className="w-full"
+        ref={setDropRef}
       >
         <FoilCardImage 
           card={card} 
           autocard 
-          className={previewClasses} 
-          onClick={onClick ? handleClick : undefined}
+          className={previewClasses}
         />
       </div>
+
+      {showRating && rating !== undefined && (
+        <div 
+          style={badgeStyles}
+          title={`Bot rates this card ${Math.round(rating * 100)}% for this pick`}
+        >
+          {Math.round(rating * 100)}%
+        </div>
+      )}
     </div>
   );
 };

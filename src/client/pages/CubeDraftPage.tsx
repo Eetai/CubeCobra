@@ -15,7 +15,6 @@ import MainLayout from 'layouts/MainLayout';
 import { getCardDefaultRowColumn } from '../../util/draftutil';
 import CardDragOverlay from '../components/CardDragOverlay';
 import DraftDeckArea from '../components/DraftDeckArea';
-import DraftHeader from '../components/DraftHeader';
 import FadeOverlay from '../components/FadeOverlay';
 import { AnimationProvider } from '../contexts/AnimationContext';
 import useDraft from '../hooks/useDraft';
@@ -159,13 +158,11 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
 
   return (
     <>
-      <link rel="stylesheet" href="/css/drag-overlay-fix.css" />
       <MainLayout loginCallback={loginCallback}>
         <DisplayContextProvider cubeID={cube.id}>
           <CubeLayout cube={cube} activeLink="playtest">
             <AnimationProvider>
               <FadeOverlay fadeTransition={fadeTransition} />
-              <DraftHeader />
               <DndContext 
                 onDragEnd={onMoveCard} 
                 onDragStart={(event) => {
@@ -220,7 +217,7 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft, loginCallbac
                   />
                 </div>
                 <CardDragOverlay activeCard={activeCard} />
-              </DndContext>
+              </DndContext>   
             </AnimationProvider>
           </CubeLayout>
         </DisplayContextProvider>

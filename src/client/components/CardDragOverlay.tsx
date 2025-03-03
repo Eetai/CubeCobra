@@ -8,7 +8,7 @@ interface CardDragOverlayProps {
 
 const CardDragOverlay: React.FC<CardDragOverlayProps> = ({ activeCard }) => {
   if (!activeCard) return null;
-  
+
   return (
     <DndKitDragOverlay adjustScale={false} dropAnimation={null}>
       <div className="w-[140px] transform -translate-x-1/2 -translate-y-1/2 pointer-events-none z-[9999] opacity-80 shadow-lg">
