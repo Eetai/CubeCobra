@@ -32,7 +32,7 @@ const { CARD_HEIGHT, CARD_WIDTH, addBasics, bulkUpload, createPool, shuffle, upd
 const Notice = require('../../dynamo/models/notice');
 const Cube = require('../../dynamo/models/cube');
 const Blog = require('../../dynamo/models/blog');
-const p1p1PackModel = require('../../dynamo/models/p1p1Pack').default;
+const p1p1PackModel = require('../../dynamo/models/p1p1Pack');
 const User = require('../../dynamo/models/user');
 const Draft = require('../../dynamo/models/draft');
 const CubeAnalytic = require('../../dynamo/models/cubeAnalytic');

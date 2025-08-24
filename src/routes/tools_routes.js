@@ -22,7 +22,7 @@ const { handleRouteError, render, redirect } = require('../util/render');
 
 const CardHistory = require('../dynamo/models/cardhistory');
 const Cube = require('../dynamo/models/cube');
-const p1p1PackModel = require('../dynamo/models/p1p1Pack').default;
+const p1p1PackModel = require('../dynamo/models/p1p1Pack');
 
 const { searchCards } = require('../util/tools');
 
