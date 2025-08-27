@@ -427,10 +427,10 @@ router.post('/login', async (req, res) => {
     return redirect(req, res, '/user/login');
   }
 
-  if (user.emailVerified === false) {
-    req.flash('danger', 'Your account is not verified. Please check your email for a verification link.');
-    return redirect(req, res, '/user/login');
-  }
+  // if (user.emailVerified === false) {
+  //   req.flash('danger', 'Your account is not verified. Please check your email for a verification link.');
+  //   return redirect(req, res, '/user/login');
+  // }
 
   req.body.username = user.username;
   // TODO: fix confirmation and check it here.
