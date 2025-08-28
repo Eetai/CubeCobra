@@ -173,4 +173,5 @@ const p1p1Pack = {
   createTable: async () => client.createTable(),
 };
 
+module.exports = p1p1Pack;
 export default p1p1Pack;
