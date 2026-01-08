@@ -477,7 +477,15 @@ async function generateBalancedPack(
     };
 
     // Extract oracle IDs for bot prediction
-    const oracleIds = packResult.pack.map((card: any) => card.details?.oracle_id).filter(Boolean);
+    // For custom cards, use draftAs oracle ID instead of the card's oracle_id
+    const oracleIds = packResult.pack
+      .map((card: any) => {
+        if (card.cardID === 'custom-card' && card.draftAs) {
+          return card.draftAs;
+        }
+        return card.details?.oracle_id;
+      })
+      .filter(Boolean);
 
     // Get bot prediction
     const botResult = await getBotPrediction(oracleIds);

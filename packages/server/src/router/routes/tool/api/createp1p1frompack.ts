@@ -73,7 +73,10 @@ export const createP1P1FromPackHandler = async (req: Request, res: Response) => 
           cards.push(cubeCard);
 
           // Collect oracle IDs for bot prediction (use existing details from cube card)
-          if (cubeCard.details?.oracle_id) {
+          // For custom cards, use draftAs oracle ID instead
+          if (cubeCard.cardID === 'custom-card' && cubeCard.draftAs) {
+            oracleIds.push(cubeCard.draftAs);
+          } else if (cubeCard.details?.oracle_id) {
             oracleIds.push(cubeCard.details.oracle_id);
           }
         } else {

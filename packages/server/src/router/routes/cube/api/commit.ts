@@ -73,10 +73,18 @@ export const commitHandler = async (req: Request, res: Response) => {
       // edits
       if ((changes as any)[board].edits) {
         for (const edit of (changes as any)[board].edits) {
+          console.log(`[commit] Applying edit to ${board}[${edit.index}]:`, {
+            draftAs: edit.newCard.draftAs,
+            cardID: edit.newCard.cardID,
+            custom_name: edit.newCard.custom_name,
+          });
           (cards as any)[board][edit.index] = {
             ...(cards as any)[board][edit.index],
             ...edit.newCard,
           };
+          console.log(`[commit] After edit, card has:`, {
+            draftAs: (cards as any)[board][edit.index].draftAs,
+          });
         }
       }
       // removes

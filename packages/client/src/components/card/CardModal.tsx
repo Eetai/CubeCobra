@@ -36,6 +36,7 @@ import withModal from 'components/WithModal';
 
 import { cardImageBackUrl, cardImageUrl } from '../../../../utils/src/cardutil';
 import DisplayContext from '../../contexts/DisplayContext';
+import AutocompleteInput from '../base/AutocompleteInput';
 import Badge from '../base/Badge';
 import Button from '../base/Button';
 import Input from '../base/Input';
@@ -94,6 +95,8 @@ const CardModal: React.FC<CardModalProps> = ({
 }) => {
   const [versions, setVersions] = useState<Record<string, CardDetails> | null>(null);
   const [versionsLoading, setVersionsLoading] = useState(false);
+  const [draftAsName, setDraftAsName] = useState<string>('');
+  const [draftAsLoading, setDraftAsLoading] = useState(false);
 
   useEffect(() => {
     const cardNorm = normalizeName(cardName(card));
@@ -117,6 +120,15 @@ const CardModal: React.FC<CardModalProps> = ({
       setVersionsLoading(false);
     }
   }, [card, versionDict, fetchVersionsForCard]);
+
+  // Load draft-as card name when card already has draftAs set
+  useEffect(() => {
+    if (isCustomCard(card) && card.draftAs && !draftAsName) {
+      // Try to get the card name from the oracle ID
+      // For now, just leave it empty - the user can re-enter it if they want to change it
+      // TODO: Could add an API endpoint to get card name from oracle ID
+    }
+  }, [card, draftAsName]);
 
   const disabled = !canEdit || card.markedForDelete;
 
@@ -178,6 +190,34 @@ const CardModal: React.FC<CardModalProps> = ({
       doCmcValidity(input);
     },
     [updateField, doCmcValidity],
+  );
+
+  const handleDraftAsSubmit = useCallback(
+    async (event: React.FormEvent<HTMLInputElement>, match?: string) => {
+      if (match) {
+        setDraftAsLoading(true);
+        try {
+          const response = await fetch(`/cube/api/getcardfromname/${encodeURIComponent(match)}`);
+          if (response.ok) {
+            const json = await response.json();
+            if (json.success === 'true' && json.card) {
+              console.log('[CardModal] Setting draftAs:', {
+                cardName: match,
+                oracleId: json.card.oracle_id,
+                cardIndex: card.index,
+              });
+              updateField('draftAs', json.card.oracle_id);
+              setDraftAsName(match);
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching card for draftAs:', error);
+        } finally {
+          setDraftAsLoading(false);
+        }
+      }
+    },
+    [updateField, card.index],
   );
 
   const revertAction = useCallback(() => {
@@ -298,15 +338,39 @@ const CardModal: React.FC<CardModalProps> = ({
             <Col xs={12} sm={6}>
               <Flexbox direction="col" gap="2">
                 {isCustomCard(card) ? (
-                  <Input
-                    label="Name"
-                    type="text"
-                    name="custom_name"
-                    value={card.custom_name || ''}
-                    onChange={(event) => updateField('custom_name', event.target.value)}
-                    disabled={disabled}
-                    required
-                  />
+                  <>
+                    <Input
+                      label="Name"
+                      type="text"
+                      name="custom_name"
+                      value={card.custom_name || ''}
+                      onChange={(event) => updateField('custom_name', event.target.value)}
+                      disabled={disabled}
+                      required
+                    />
+                    <AutocompleteInput
+                      label="Draft As (Required)"
+                      treeUrl="/cube/api/cardnames"
+                      treePath="cardnames"
+                      value={draftAsName}
+                      setValue={setDraftAsName}
+                      onSubmit={handleDraftAsSubmit}
+                      placeholder="Enter card name for bots to draft as..."
+                      disabled={disabled || draftAsLoading}
+                      valid={card.draftAs ? undefined : false}
+                      showImages={false}
+                    />
+                    {card.draftAs && (
+                      <Text sm className="text-text-secondary mt-1">
+                        Bots will treat this custom card as "{draftAsName || 'the selected card'}" when drafting and building decks.
+                      </Text>
+                    )}
+                    {!card.draftAs && (
+                      <Text sm className="text-danger mt-1">
+                        This field is required to draft with bots. Enter the name of a real card.
+                      </Text>
+                    )}
+                  </>
                 ) : (
                   <Select
                     label="Version"

@@ -63,8 +63,15 @@ const fetchBatchPredict = async (inputs: BatchPredictRequest[]): Promise<Predict
 const processPredictions = (json: PredictResponse, packCards: any[]) => {
   // Create a map of oracle IDs to ratings
   const predictionsMap = new Map(json.prediction[0].map((p) => [p.oracle, p.rating]));
+  console.log('[DraftAs] DEBUG - packCards length:', packCards.length);
+  console.log('[DraftAs] DEBUG - predictions length:', json.prediction[0].length);
+  console.log('[DraftAs] DEBUG - packCards oracle_ids:', packCards.map(c => c.oracle_id));
+  console.log('[DraftAs] DEBUG - prediction oracles:', json.prediction[0].map(p => p.oracle));
+
   // Then add ratings to packCards while maintaining pack order
-  return packCards.map((card) => predictionsMap.get(card.oracle_id) || 0);
+  const ratings = packCards.map((card) => predictionsMap.get(card.oracle_id) || 0);
+  console.log('[DraftAs] DEBUG - final ratings length:', ratings.length);
+  return ratings;
 };
 
 const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft }) => {
@@ -144,22 +151,48 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft }) => {
     }
   }, [csrfFetch, draft.id, mainboard, userPicksInOrder, sideboard, state, setDraftStatus, trashboard, addAlert]);
 
+  // Helper function to get oracle ID with draftAs substitution for custom cards
+  const getEffectiveOracleId = useCallback(
+    (cardIndex: number): string | undefined => {
+      const card = draft.cards[cardIndex];
+      if (!card?.details) return undefined;
+
+      // If it's a custom card with draftAs, use the draftAs oracle
+      if (card.cardID === 'custom-card' && card.draftAs) {
+        console.log(`[DraftAs] Custom card at index ${cardIndex}: using draftAs oracle ${card.draftAs}`);
+        return card.draftAs;
+      }
+
+      // Otherwise use the card's normal oracle ID
+      return card.details.oracle_id;
+    },
+    [draft.cards],
+  );
+
   const getPredictions = useCallback(
     async (request: { state: any; packCards: { index: number; oracle_id: string }[] }) => {
       setDraftStatus((prev) => ({ ...prev, predictionsLoading: true, predictError: false }));
       try {
+        console.log('[DraftAs] packCards before prediction:', request.packCards);
+
         const inputs = request.state.seats.map((seat: any) => ({
           pack: seat.pack
-            .map((index: number) => draft.cards[index]?.details?.oracle_id)
+            .map((index: number) => getEffectiveOracleId(index))
             .filter((id: string | undefined): id is string => Boolean(id)),
           picks: seat.picks
-            .map((index: number) => draft.cards[index]?.details?.oracle_id)
+            .map((index: number) => getEffectiveOracleId(index))
             .filter((id: string | undefined): id is string => Boolean(id)),
         }));
 
+        console.log('[DraftAs] inputs to ML API:', inputs);
+
         const json = await fetchBatchPredict(inputs);
+        console.log('[DraftAs] ML API response:', json);
+
         setCurrentPredictions(json);
-        setRatings(processPredictions(json, request.packCards));
+        const ratings = processPredictions(json, request.packCards);
+        console.log('[DraftAs] processed ratings:', ratings);
+        setRatings(ratings);
         return json;
       } catch (error) {
         console.error('Error fetching predictions:', error, 'inputs', request.state);
@@ -169,7 +202,7 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft }) => {
         setDraftStatus((prev) => ({ ...prev, predictionsLoading: false }));
       }
     },
-    [draft.cards],
+    [getEffectiveOracleId],
   );
 
   const handleRetryPredict = useCallback(async () => {
@@ -182,13 +215,13 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft }) => {
       const currentState = state;
       const packCards = currentState.seats[0].pack.map((index) => ({
         index,
-        oracle_id: draft.cards[index]?.details?.oracle_id || '',
+        oracle_id: getEffectiveOracleId(index) || '',
       }));
       await getPredictions({ state: currentState, packCards });
     } finally {
       setDraftStatus((prev) => ({ ...prev, retryInProgress: false }));
     }
-  }, [state, draft.cards, getPredictions, draftStatus.retryInProgress, setDraftStatus]);
+  }, [state, getEffectiveOracleId, getPredictions, draftStatus.retryInProgress, setDraftStatus]);
 
   const makePick = useCallback(
     async (packIndex: number) => {
@@ -226,7 +259,7 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft }) => {
         // Use existing predictions for bot picks
         if (currentPredictions?.prediction) {
           const picks = currentPredictions.prediction.slice(1).map((seat, index) => {
-            const pack = state.seats[index + 1].pack.map((i) => draft.cards[i].details?.oracle_id);
+            const pack = state.seats[index + 1].pack.map((i) => getEffectiveOracleId(i));
 
             if (pack.length === 0) {
               return -1;
@@ -346,7 +379,7 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft }) => {
             packCards: newState.seats[0].pack
               .map((index) => ({
                 index,
-                oracle_id: draft.cards[index]?.details?.oracle_id || '',
+                oracle_id: getEffectiveOracleId(index) || '',
               }))
               .filter((card): card is { index: number; oracle_id: string } => Boolean(card.oracle_id)),
           };
@@ -683,7 +716,7 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft }) => {
           state,
           packCards: state.seats[0].pack.map((index) => ({
             index,
-            oracle_id: draft.cards[index]?.details?.oracle_id || '',
+            oracle_id: getEffectiveOracleId(index) || '',
           })),
         };
         await getPredictions(request);
@@ -691,7 +724,7 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft }) => {
     };
 
     fetchInitialRatings();
-  }, [draft.cards, state, getPredictions]);
+  }, [getEffectiveOracleId, state, getPredictions]);
 
   const packTitle: string = useMemo(() => {
     const nextStep = state.stepQueue[0];

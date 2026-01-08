@@ -554,6 +554,14 @@ export function CubeContextProvider({
       const newCardData = deepCopy(card);
       delete newCardData.details;
 
+      console.log('[CubeContext.editCard] Card data:', {
+        index,
+        board,
+        draftAs: newCardData.draftAs,
+        cardID: newCardData.cardID,
+        custom_name: newCardData.custom_name,
+      });
+
       // if this card has already been edited, overwrite the edit
       const editIndex = edits.findIndex((e) => e.index === index);
       if (editIndex !== -1) {

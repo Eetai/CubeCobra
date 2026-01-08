@@ -1111,7 +1111,16 @@ export class CubeDynamoDao extends BaseDynamoDao<Cube, UnhydratedCube> {
    * Strips card details before storage.
    */
   private stripDetails(cards: any[]): void {
-    cards.forEach((card: any) => {
+    cards.forEach((card: any, index: number) => {
+      // Log before stripping to see what fields are present
+      if (card.draftAs || card.cardID === 'custom-card') {
+        cloudwatch.info(`[stripDetails] Card ${index} before strip:`, {
+          cardID: card.cardID,
+          draftAs: card.draftAs,
+          custom_name: card.custom_name,
+        });
+      }
+
       delete card.details;
       delete card.index;
       delete card.board;
@@ -1123,6 +1132,15 @@ export class CubeDynamoDao extends BaseDynamoDao<Cube, UnhydratedCube> {
             return tag.text;
           }
           return tag;
+        });
+      }
+
+      // Log after stripping to verify draftAs is still there
+      if (card.draftAs || card.cardID === 'custom-card') {
+        cloudwatch.info(`[stripDetails] Card ${index} after strip:`, {
+          cardID: card.cardID,
+          draftAs: card.draftAs,
+          custom_name: card.custom_name,
         });
       }
     });

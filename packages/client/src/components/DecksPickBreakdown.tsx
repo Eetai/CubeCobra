@@ -120,12 +120,26 @@ const CubeBreakdown: React.FC<BreakdownProps> = ({ draft, seatNumber, pickNumber
           }
         }
 
+        // Helper function to get effective oracle ID (handles custom cards with draftAs)
+        const getEffectiveOracleId = (cardIndex: number): string | undefined => {
+          const card = draft.cards[cardIndex];
+          if (!card) return undefined;
+
+          // If it's a custom card with draftAs, use the draftAs oracle
+          if (card.cardID === 'custom-card' && card.draftAs) {
+            return card.draftAs;
+          }
+
+          // Otherwise use the card's normal oracle ID
+          return card.details?.oracle_id;
+        };
+
         const response = await fetch(`/api/draftbots/predict`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            pack: cardsInPack.map((item) => draft.cards[item.cardIndex]?.details?.oracle_id).filter(Boolean),
-            picks: allPicks.map((idx) => draft.cards[idx]?.details?.oracle_id).filter(Boolean),
+            pack: cardsInPack.map((item) => getEffectiveOracleId(item.cardIndex)).filter(Boolean),
+            picks: allPicks.map((idx) => getEffectiveOracleId(idx)).filter(Boolean),
           }),
         });
 
@@ -133,9 +147,7 @@ const CubeBreakdown: React.FC<BreakdownProps> = ({ draft, seatNumber, pickNumber
           const data = await response.json();
           const newRatings = new Array(cardsInPack.length).fill(0);
           data.prediction.forEach((pred: { oracle: string; rating: number }) => {
-            const cardIndex = cardsInPack.findIndex(
-              (idx) => draft.cards[idx.cardIndex].details?.oracle_id === pred.oracle,
-            );
+            const cardIndex = cardsInPack.findIndex((idx) => getEffectiveOracleId(idx.cardIndex) === pred.oracle);
             if (cardIndex !== -1) {
               newRatings[cardIndex] = pred.rating;
             }
