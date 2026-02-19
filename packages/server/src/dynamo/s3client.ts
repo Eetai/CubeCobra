@@ -43,6 +43,24 @@ export const putObject = async (bucket: string, key: string, value: any): Promis
   });
 };
 
+export const putBinaryObject = async (bucket: string, key: string, buffer: Buffer, contentType: string): Promise<void> => {
+  await s3.putObject({
+    Bucket: bucket,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+  });
+};
+
+export const getBinaryObject = async (bucket: string, key: string): Promise<Buffer | null> => {
+  try {
+    const res = await s3.getObject({ Bucket: bucket, Key: key });
+    return Buffer.from(await res.Body!.transformToByteArray());
+  } catch {
+    return null;
+  }
+};
+
 export const deleteObject = async (bucket: string, key: string): Promise<void> => {
   await s3.deleteObject({
     Bucket: bucket,

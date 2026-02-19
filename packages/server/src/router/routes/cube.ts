@@ -1,6 +1,7 @@
 import { CUBE_VISIBILITY } from '@utils/datatypes/Cube';
 import { NoticeType } from '@utils/datatypes/Notice';
 import { changelogDao, cubeDao, draftDao, featuredQueueDao, noticeDao, p1p1PackDao, userDao } from 'dynamo/daos';
+import { getBinaryObject, getBucketName, putBinaryObject } from 'dynamo/s3client';
 import { csrfProtection, ensureAuth } from 'router/middleware';
 import { abbreviate, cachePromise, generateBalancedPack, generatePack, isCubeViewable } from 'serverutils/cubefn';
 import { isInFeaturedQueue } from 'serverutils/featuredQueue';
@@ -458,8 +459,28 @@ export const p1p1PackImageHandler = async (req: Request, res: Response) => {
       return redirect(req, res, '/404');
     }
 
+    const s3ImageKey = `p1p1-pack-images/${packId}.webp`;
+    const bucket = getBucketName();
+
+    // Serve from S3 cache if available (persists across server restarts)
+    const cachedImage = await getBinaryObject(bucket, s3ImageKey);
+    if (cachedImage) {
+      res.writeHead(200, {
+        'Content-Type': 'image/webp',
+        'Cache-Control': 'public, max-age=86400, immutable',
+        ETag: `"${packId}"`,
+      });
+      return res.end(cachedImage);
+    }
+
+    // Generate image, cache in memory for concurrent requests, then persist to S3
     const imageBuffer = await cachePromise(`/p1p1pack/${packId}`, async () => {
       return generatePackImage(pack.cards);
+    });
+
+    // Fire-and-forget S3 upload so we don't delay the response
+    putBinaryObject(bucket, s3ImageKey, imageBuffer, 'image/webp').catch((err) => {
+      console.error(`Failed to cache pack image to S3 for pack ${packId}:`, err);
     });
 
     res.writeHead(200, {
