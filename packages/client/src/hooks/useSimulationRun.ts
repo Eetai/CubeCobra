@@ -362,7 +362,21 @@ export default function useSimulationRun({
       setSimPhase('loadmodel');
       setModelLoadProgress(0);
       const modelLoadStart = performance.now();
-      await loadDraftBot((pct) => setModelLoadProgress(pct));
+      const MODEL_LOAD_TIMEOUT_MS = 5 * 60 * 1000;
+      await Promise.race([
+        loadDraftBot((pct) => setModelLoadProgress(pct)),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  'Model loading timed out after 5 minutes. This may be caused by a slow connection, a browser extension blocking the request, or a GPU that does not support WebGL2. Try refreshing or using a different browser.',
+                ),
+              ),
+            MODEL_LOAD_TIMEOUT_MS,
+          ),
+        ),
+      ]);
       throwIfAborted(controller.signal);
       const recommenderWarmupPromise = loadDraftRecommender().catch((err) => {
         console.error('Failed to warm draft recommender during run:', err);

@@ -87,10 +87,12 @@ export async function loadDraftBot(onProgress?: (pct: number) => void): Promise<
 
     // On iOS, WebGL hits the shared memory budget (~1.2 GB) and gets killed
     // mid-simulation. Switch to the WASM backend which uses system RAM instead.
+    // maxTouchPoints > 4 + no Chrome/Firefox = iPad in desktop mode (reports as Mac).
+    // Using > 1 was too broad and could match Macs with Magic Trackpad on some browsers.
     const isIOS =
       typeof navigator !== 'undefined' &&
       (/iPhone|iPad|iPod/.test(navigator.userAgent) ||
-        (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent)));
+        (navigator.maxTouchPoints > 4 && /Mac/.test(navigator.userAgent) && !/Chrome|Firefox/.test(navigator.userAgent)));
     if (isIOS) {
       const wasmModule = await import('@tensorflow/tfjs-backend-wasm');
       wasmModule.setWasmPaths('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@4.22.0/dist/');
