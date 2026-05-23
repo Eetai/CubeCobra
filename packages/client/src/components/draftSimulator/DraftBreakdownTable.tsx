@@ -42,6 +42,15 @@ function getColorProfileCodes(colorPair: string): string[] {
   return letters.length === 0 ? ['C'] : letters;
 }
 
+function formatBotPersonalityLabel(personality?: string): string | null {
+  if (!personality) return null;
+  return personality
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 export function getDraftComposition(
   pool: SimulatedPool,
   deck: BuiltDeck | null,
@@ -432,7 +441,7 @@ const DraftBreakdownTable: React.FC<{
                     <Text sm semibold className="block">
                       Draft {summary.pool.draftIndex + 1} · Seat {summary.pool.seatIndex + 1}
                     </Text>
-                    <div className="mt-0.5">
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                       {poolArchetypeLabels ? (
                         <span className="text-[11px] font-medium">
                           {summary.colors && summary.colors !== 'C' && (
@@ -443,6 +452,11 @@ const DraftBreakdownTable: React.FC<{
                       ) : poolArchetypeLabelsLoading ? (
                         <span className="inline-block h-3 w-24 animate-pulse rounded bg-bg-accent" />
                       ) : null}
+                      {formatBotPersonalityLabel(summary.pool.botPersonality) && (
+                        <span className="rounded bg-bg-accent px-1.5 py-0.5 text-[11px] text-text-secondary">
+                          {formatBotPersonalityLabel(summary.pool.botPersonality)}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
@@ -531,14 +545,21 @@ const DraftBreakdownTable: React.FC<{
                     <span className="text-text-secondary"> · S{summary.pool.seatIndex + 1}</span>
                   </td>
                   <td className="px-3 py-4">
-                    {poolArchetypeLabels ? (
-                      <span className="text-xs font-medium text-link">
-                        {summary.colors && summary.colors !== 'C' && `${summary.colors} `}
-                        {poolArchetypeLabels.get(summary.pool.poolIndex) ?? '—'}
-                      </span>
-                    ) : poolArchetypeLabelsLoading ? (
-                      <span className="inline-block h-3 w-28 animate-pulse rounded bg-bg-accent" />
-                    ) : null}
+                    <div className="flex flex-col gap-1">
+                      {poolArchetypeLabels ? (
+                        <span className="text-xs font-medium text-link">
+                          {summary.colors && summary.colors !== 'C' && `${summary.colors} `}
+                          {poolArchetypeLabels.get(summary.pool.poolIndex) ?? '—'}
+                        </span>
+                      ) : poolArchetypeLabelsLoading ? (
+                        <span className="inline-block h-3 w-28 animate-pulse rounded bg-bg-accent" />
+                      ) : null}
+                      {formatBotPersonalityLabel(summary.pool.botPersonality) && (
+                        <span className="text-[11px] text-text-secondary">
+                          Bot: {formatBotPersonalityLabel(summary.pool.botPersonality)}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-4">
                     <RowColorShare deck={summary.deck} cardMeta={cardMeta} />

@@ -67,6 +67,8 @@ import useSimulationRun from '../hooks/useSimulationRun';
 import CubeLayout from '../layouts/CubeLayout';
 import MainLayout from '../layouts/MainLayout';
 import {
+  BOT_PERSONALITIES,
+  type BotPersonalityId,
   buildOracleRemapping,
   computeCubeContext,
   DeckbuildEntry,
@@ -348,6 +350,7 @@ function reconstructSimulatedPools(slimPools: SlimPool[], cardMeta: Record<strin
     draftIndex: slim.draftIndex,
     seatIndex: slim.seatIndex,
     archetype: slim.archetype,
+    botPersonality: slim.botPersonality,
     picks: slim.picks.map((p) => {
       const meta = cardMeta[p.oracle_id];
       return {
@@ -367,6 +370,7 @@ async function runClientSimulation(
   onProgress: (pct: number) => void,
   signal?: AbortSignal,
   gpuBatchSize?: number,
+  botPersonalities?: BotPersonalityId[],
 ): Promise<SimulationReport> {
   const { initialPacks, packSteps, cardMeta, cubeName, numSeats } = setup;
   const oracleRemapping = buildOracleRemapping(cardMeta);
@@ -407,6 +411,10 @@ async function runClientSimulation(
   let donePicks = 0;
 
   const numPacks = packSteps.length;
+  const activePersonalities = botPersonalities && botPersonalities.length > 0 ? botPersonalities : ['default'];
+  const seatPersonalityByDraft: BotPersonalityId[][] = Array.from({ length: numDrafts }, () =>
+    Array.from({ length: numSeats }, () => activePersonalities[randomIndex(activePersonalities.length)] as BotPersonalityId),
+  );
   const allCurrentPacks: string[][][] = Array.from({ length: numDrafts }, (_, d) =>
     Array.from({ length: numSeats }, (_, s) => [...(initialPacks[d]?.[s]?.[0] ?? [])]),
   );
@@ -451,7 +459,8 @@ async function runClientSimulation(
             const expectedPicks = numDrafts * numSeats;
 
             // Local TF.js inference — no server round-trip
-            picks = await localPickBatch(flatPacks, flatPools, oracleRemapping, gpuBatchSize, cubeCtx);
+            const flatPersonalities = seatPersonalityByDraft.flatMap((draftSeats) => draftSeats);
+            picks = await localPickBatch(flatPacks, flatPools, oracleRemapping, gpuBatchSize, cubeCtx, flatPersonalities);
             if (!Array.isArray(picks) || picks.length !== expectedPicks) {
               throw new Error(`Local draft bot returned ${picks?.length ?? 0} picks, expected ${expectedPicks}`);
             }
@@ -526,6 +535,7 @@ async function runClientSimulation(
         draftIndex: d,
         seatIndex: s,
         archetype,
+        botPersonality: seatPersonalityByDraft[d]?.[s],
         picks: picks.map((oracle_id, k) => ({
           oracle_id,
           packNumber: metas[k]?.packNumber ?? 0,
@@ -946,6 +956,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
   const [numDrafts, setNumDrafts] = useState(100);
   const [numSeats, setNumSeats] = useState(8);
   const [gpuBatchSize, setGpuBatchSize] = useState(() => (isMobileLayout ? 4 : 32));
+  const [botPersonalities, setBotPersonalities] = useState<BotPersonalityId[]>(['default']);
   const [selectedFormatId, setSelectedFormatId] = useState(cube.defaultFormat ?? -1);
 
   // Session-level cache — avoids recomputing embeddings when switching between runs
@@ -1105,6 +1116,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
     numDrafts,
     numSeats,
     gpuBatchSize,
+    botPersonalities,
     selectedFormatId,
     buildAllDecks,
     runClientSimulation,
@@ -1622,7 +1634,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
                     Simulate bot-only drafts to estimate pick rates, color trends, and archetype outcomes. The draft
                     simulation and deckbuilding run locally in your browser and results are stored on this device.
                     Machines with lower GPU or memory headroom may need to use Advanced Options to reduce batch size or
-                    clustering work on larger runs.
+                    attempt smaller runs.
                   </Text>
                 </div>
               </CardHeader>
@@ -1878,6 +1890,55 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
               </button>
               <Collapse isOpen={showAdvancedOptions}>
                 <div className="px-4 pb-4 flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-medium text-text-secondary">Bot personalities</label>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      {Object.values(BOT_PERSONALITIES).map((personality) => {
+                        const selected = botPersonalities.includes(personality.id);
+                        const onlyOneSelected = selected && botPersonalities.length === 1;
+                        return (
+                          <button
+                            key={personality.id}
+                            type="button"
+                            disabled={isRunning}
+                            onClick={() =>
+                              setBotPersonalities((current) => {
+                                if (current.includes(personality.id)) {
+                                  return onlyOneSelected ? current : current.filter((id) => id !== personality.id);
+                                }
+                                return [...current, personality.id];
+                              })
+                            }
+                            className={[
+                              'rounded border p-3 text-left transition-colors',
+                              selected
+                                ? 'border-link bg-link/10'
+                                : 'border-border bg-bg hover:bg-bg-active',
+                              isRunning ? 'opacity-60 cursor-not-allowed' : '',
+                            ].join(' ')}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm font-semibold text-text">{personality.label}</span>
+                              <span
+                                className={[
+                                  'inline-flex h-4 w-4 items-center justify-center rounded border text-[10px]',
+                                  selected ? 'border-link bg-link text-white' : 'border-border text-transparent',
+                                ].join(' ')}
+                              >
+                                ✓
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs leading-snug text-text-secondary">{personality.description}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-text-secondary leading-snug">
+                      Enabled personalities are assigned randomly across seats for the proof of concept. This only
+                      changes how the bot samples among model-rated picks; it does not change deckbuilding or archetype
+                      scoring yet.
+                    </p>
+                  </div>
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-medium text-text-secondary" htmlFor="draftSimulatorGpuBatchSize">
                       GPU batch size

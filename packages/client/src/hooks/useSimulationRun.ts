@@ -13,6 +13,7 @@ import type {
 
 import {
   buildOracleRemapping,
+  type BotPersonalityId,
   countOutOfVocabOracles,
   encodePools,
   loadDraftRecommender,
@@ -50,6 +51,7 @@ interface UseSimulationRunArgs {
   numDrafts: number;
   numSeats: number;
   gpuBatchSize: number;
+  botPersonalities: BotPersonalityId[];
   selectedFormatId: number;
   buildAllDecks: (
     slimPools: SlimPool[],
@@ -63,6 +65,7 @@ interface UseSimulationRunArgs {
     onProgress: (pct: number) => void,
     signal?: AbortSignal,
     gpuBatchSize?: number,
+    botPersonalities?: BotPersonalityId[],
   ) => Promise<SimulationReport>;
   nextLowerGpuBatchSize: (batchSize: number) => number | null;
   onResetViewSelection: () => void;
@@ -202,6 +205,7 @@ export default function useSimulationRun({
   numDrafts,
   numSeats,
   gpuBatchSize,
+  botPersonalities,
   selectedFormatId,
   buildAllDecks,
   runClientSimulation,
@@ -394,7 +398,15 @@ export default function useSimulationRun({
       const simulationStart = performance.now();
       const report = await runWithGpuRetry(
         'Draft simulation',
-        (bs) => runClientSimulation(setupData as SimulationSetupResponse, numDrafts, setSimProgress, controller.signal, bs),
+        (bs) =>
+          runClientSimulation(
+            setupData as SimulationSetupResponse,
+            numDrafts,
+            setSimProgress,
+            controller.signal,
+            bs,
+            botPersonalities,
+          ),
         () => setSimProgress(0),
       );
       throwIfAborted(controller.signal);

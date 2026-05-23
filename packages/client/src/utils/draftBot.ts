@@ -198,6 +198,46 @@ export function countOutOfVocabOracles(cardMeta: Record<string, { mlOracleId?: s
 export type RatedCard = { oracle: string; rating: number };
 type MlSeatMaps = { toMl: Record<string, string>; fromMl: Record<string, string[]> };
 type DeckCardMeta = DeckbuildEntry['cardMeta'][string];
+export type BotPersonalityId = 'default' | 'disciplined' | 'open' | 'chaotic';
+
+export interface BotPersonalityConfig {
+  id: BotPersonalityId;
+  label: string;
+  description: string;
+  temperature: number;
+  topK: number | null;
+}
+
+export const BOT_PERSONALITIES: Record<BotPersonalityId, BotPersonalityConfig> = {
+  default: {
+    id: 'default',
+    label: 'Default',
+    description: 'Current greedy bot behavior: always take the top-rated card.',
+    temperature: 0,
+    topK: null,
+  },
+  disciplined: {
+    id: 'disciplined',
+    label: 'Disciplined',
+    description: 'Low-variance drafting that usually stays near the top pick.',
+    temperature: 0.45,
+    topK: 2,
+  },
+  open: {
+    id: 'open',
+    label: 'Open',
+    description: 'Broader sampling from strong alternatives to stay less locked in.',
+    temperature: 0.9,
+    topK: 5,
+  },
+  chaotic: {
+    id: 'chaotic',
+    label: 'Chaotic',
+    description: 'High-variance drafting that samples deeper into the pack.',
+    temperature: 1.35,
+    topK: 8,
+  },
+};
 
 /**
  * Resolve the ML oracle ID for a given oracle ID, applying the remapping for
@@ -205,6 +245,52 @@ type DeckCardMeta = DeckbuildEntry['cardMeta'][string];
  */
 function mlOracle(oracle: string, remapping?: Record<string, string>): string {
   return remapping?.[oracle] ?? oracle;
+}
+
+function sampleIndexFromWeights(weights: number[]): number {
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  if (!(total > 0)) return 0;
+  let threshold = Math.random() * total;
+  for (let i = 0; i < weights.length; i++) {
+    threshold -= weights[i] ?? 0;
+    if (threshold <= 0) return i;
+  }
+  return Math.max(0, weights.length - 1);
+}
+
+function choosePersonalityPick(
+  pack: string[],
+  rowBase: number,
+  logits: Float32Array,
+  remapping: Record<string, string> | undefined,
+  personality: BotPersonalityId | undefined,
+): string {
+  if (pack.length === 0) return '';
+
+  let bestOracle = '';
+  let bestRaw = -Infinity;
+  const scoredPack = pack.map((oracle) => {
+    const idx = oracleToIndex[mlOracle(oracle, remapping)];
+    const raw = idx !== undefined ? (logits[rowBase + idx] ?? 0) : 0;
+    if (raw > bestRaw) {
+      bestRaw = raw;
+      bestOracle = oracle;
+    }
+    return { oracle, raw };
+  });
+
+  const config = personality ? BOT_PERSONALITIES[personality] : BOT_PERSONALITIES.default;
+  if (!config || config.temperature <= 0) return bestOracle;
+
+  const ranked = [...scoredPack].sort((a, b) => b.raw - a.raw);
+  const truncated = config.topK ? ranked.slice(0, config.topK) : ranked;
+  if (truncated.length === 0) return bestOracle;
+  if (truncated.length === 1) return truncated[0]!.oracle;
+
+  const maxRaw = truncated[0]!.raw;
+  const temperature = Math.max(0.05, config.temperature);
+  const weights = truncated.map((item) => Math.exp((item.raw - maxRaw) / temperature));
+  return truncated[sampleIndexFromWeights(weights)]!.oracle;
 }
 
 /**
@@ -476,6 +562,7 @@ export async function localPickBatch(
   remapping?: Record<string, string>,
   chunkSize?: number,
   cubeCtx?: Float32Array,
+  personality?: BotPersonalityId | BotPersonalityId[],
 ): Promise<string[]> {
   if (!draftBotLoaded || !tf || !encoder || !draftDecoder || packs.length === 0) {
     return packs.map(() => '');
@@ -486,22 +573,14 @@ export async function localPickBatch(
 
   // Extract top pick per seat via pack-masked argmax.
   // Softmax preserves the same ordering while doing substantially more work.
-  return packs.map((pack, i) => {
-    if (pack.length === 0) return '';
-    const rowBase = i * numOracles;
-
-    let bestOracle = '';
-    let bestRaw = -Infinity;
-    for (const oracle of pack) {
-      const idx = oracleToIndex[mlOracle(oracle, remapping)];
-      const raw = idx !== undefined ? (logits[rowBase + idx] ?? 0) : 0;
-      if (raw > bestRaw) {
-        bestRaw = raw;
-        bestOracle = oracle;
-      }
-    }
-    return bestOracle;
-  });
+  return packs.map((pack, i) =>
+    choosePersonalityPick(
+      pack,
+      i * numOracles,
+      logits,
+      remapping,
+      Array.isArray(personality) ? personality[i] : personality,
+    ));
 }
 
 // ---------------------------------------------------------------------------

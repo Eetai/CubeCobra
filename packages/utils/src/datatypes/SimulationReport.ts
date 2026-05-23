@@ -58,6 +58,7 @@ export interface SimulatedPool {
   draftIndex: number;
   seatIndex: number;
   archetype: string;
+  botPersonality?: string;
   picks: SimulatedPickCard[];
 }
 
@@ -98,6 +99,7 @@ export interface SlimPool {
   draftIndex: number;
   seatIndex: number;
   archetype: string;
+  botPersonality?: string;
   picks: { oracle_id: string; packNumber: number; pickNumber: number }[];
 }
 
