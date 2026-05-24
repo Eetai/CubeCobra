@@ -13,7 +13,7 @@ import type {
 import DraftBreakdownDisplay from '../draft/DraftBreakdownDisplay';
 import { Flexbox } from '../base/Layout';
 import Text from '../base/Text';
-import { buildOracleRemapping, loadDraftBot, localBatchDraftRanked } from '../../utils/draftBot';
+import { buildOracleRemapping, computeCubeContext, loadDraftBot, localBatchDraftRanked } from '../../utils/draftBot';
 import { modelScoresToProbabilities } from '../../utils/botRatings';
 
 const SIM_PREVIEW_CARD_W = 140;
@@ -199,10 +199,18 @@ export const PickCard: React.FC<{ pick: SimulatedPickCard; isSelected: boolean }
   </div>
 ));
 
+function formatBotPersonalityLabel(personality?: string): string | null {
+  if (!personality) return null;
+  return personality
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 const SimulatorPickBreakdown: React.FC<{ pool: SimulatedPool; runData: SimulationRunData }> = ({ pool, runData }) => {
   const [pickNumber, setPickNumber] = useState('0');
   const [selectedSeatIndex, setSelectedSeatIndex] = useState(pool.seatIndex);
-  const [showRatings, setShowRatings] = useState(true);
   const [ratings, setRatings] = useState<number[]>([]);
   const seatPools = useMemo(
     () =>
@@ -247,7 +255,7 @@ const SimulatorPickBreakdown: React.FC<{ pool: SimulatedPool; runData: Simulatio
 
   useEffect(() => {
     let cancelled = false;
-    if (!showRatings || !current || current.packOracleIds.length === 0) {
+    if (!current || current.packOracleIds.length === 0) {
       setRatings([]);
       return () => {
         cancelled = true;
@@ -257,9 +265,13 @@ const SimulatorPickBreakdown: React.FC<{ pool: SimulatedPool; runData: Simulatio
     (async () => {
       try {
         await loadDraftBot();
+        const remapping = buildOracleRemapping(runData.cardMeta);
+        const cubeCtx = await computeCubeContext(Object.keys(runData.cardMeta), remapping);
         const ranked = await localBatchDraftRanked(
           [{ pack: current.packOracleIds, pool: current.previousPickOracleIds }],
-          buildOracleRemapping(runData.cardMeta),
+          remapping,
+          undefined,
+          cubeCtx,
         );
         if (cancelled) return;
         const rawByOracle = new Map((ranked[0] ?? []).map((entry) => [entry.oracle, entry.rating]));
@@ -275,7 +287,7 @@ const SimulatorPickBreakdown: React.FC<{ pool: SimulatedPool; runData: Simulatio
     return () => {
       cancelled = true;
     };
-  }, [current, runData.cardMeta, showRatings]);
+  }, [current, runData.cardMeta]);
 
   if (!breakdown || !current) {
     return (
@@ -293,6 +305,9 @@ const SimulatorPickBreakdown: React.FC<{ pool: SimulatedPool; runData: Simulatio
     setPickNumber((picks + pickIndex).toString());
   };
   const selectedSeatPoolIndex = seatPools.findIndex((candidate) => candidate.seatIndex === selectedSeatIndex);
+  const selectedSeatPool = selectedSeatPoolIndex >= 0 ? seatPools[selectedSeatPoolIndex] : null;
+  const selectedSeatPersonality =
+    selectedSeatPool != null ? runData.slimPools[selectedSeatPool.poolIndex]?.botPersonality : pool.botPersonality;
   const goToRelativeSeat = (delta: number) => {
     if (seatPools.length === 0) return;
     const currentIndex = selectedSeatPoolIndex >= 0 ? selectedSeatPoolIndex : 0;
@@ -311,6 +326,11 @@ const SimulatorPickBreakdown: React.FC<{ pool: SimulatedPool; runData: Simulatio
         <Text sm semibold>
           Draft {pool.draftIndex + 1} · Seat {selectedSeatIndex + 1}
         </Text>
+        {formatBotPersonalityLabel(selectedSeatPersonality) && (
+          <Text xs className="text-text-secondary">
+            Personality: {formatBotPersonalityLabel(selectedSeatPersonality)}
+          </Text>
+        )}
         <Flexbox direction="row" gap="1" className="flex-wrap">
           <button
             type="button"
@@ -344,19 +364,19 @@ const SimulatorPickBreakdown: React.FC<{ pool: SimulatedPool; runData: Simulatio
         </Flexbox>
       </Flexbox>
       <DraftBreakdownDisplay
-        showRatings={showRatings}
-        setShowRatings={setShowRatings}
+        showRatings
+        setShowRatings={() => {}}
         packNumber={current.packNumber}
         pickNumber={current.pickNumber}
         cardsInPack={current.cardsInPack}
         picksList={breakdown.picksList}
-        ratings={showRatings ? ratings : undefined}
+        ratings={ratings}
         actualPickIndex={current.actualPickIndex}
         cards={breakdown.cards}
         onPickClick={onPickClick}
         cardUrlPrefix="/tool/card"
         hideRatingsToggle
-        hideHelpText
+        hideHelpText={false}
       />
     </div>
   );
