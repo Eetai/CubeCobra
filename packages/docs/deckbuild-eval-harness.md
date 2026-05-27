@@ -139,6 +139,79 @@ Initial corpora:
 1. `vintage-cube-frozen-v1`
 2. `curated-benchmark-pools-v1`
 
+### Initial workflow
+
+1. Freeze a corpus from saved simulator outputs:
+
+```bash
+npm run deckbuild:corpus --workspace=packages/client -- \
+  --run-data /path/to/runData.json \
+  --setup /path/to/setupData.json \
+  --id vintage-cube-frozen-v1
+```
+
+2. Evaluate the current local deckbuilder against that corpus:
+
+```bash
+npm run deckbuild:eval --workspace=packages/client -- \
+  --corpus vintage-cube-frozen-v1
+```
+
+For iterative runs on large corpora, start with a subset and batched progress:
+
+```bash
+npm run deckbuild:eval --workspace=packages/client -- \
+  --corpus vintage-cube-frozen-v1 \
+  --pool-limit 500 \
+  --pool-batch-size 100
+```
+
+For focused benchmark work, filter to the relevant family first:
+
+```bash
+npm run deckbuild:eval --workspace=packages/client -- \
+  --corpus vintage-cube-frozen-v1 \
+  --filter-family power-fast-mana \
+  --pool-limit 500 \
+  --pool-batch-size 100
+```
+
+To compare general Phase 1 seed-size variants:
+
+```bash
+npm run deckbuild:eval --workspace=packages/client -- \
+  --corpus vintage-cube-frozen-v1 \
+  --filter-family power-fast-mana \
+  --pool-limit 500 \
+  --pool-batch-size 100 \
+  --variant seed-6
+```
+
+To compare a general post-build single-swap optimization pass:
+
+```bash
+npm run deckbuild:eval --workspace=packages/client -- \
+  --corpus vintage-cube-frozen-v1 \
+  --filter-family power-fast-mana \
+  --pool-limit 500 \
+  --pool-batch-size 100 \
+  --variant swap-1
+```
+
+Or filter to explicit card names:
+
+```bash
+npm run deckbuild:eval --workspace=packages/client -- \
+  --corpus vintage-cube-frozen-v1 \
+  --filter-card-names "Mox Emerald,Mox Sapphire,Mox Jet,Mox Ruby,Mox Pearl"
+```
+
+This writes:
+
+- a frozen corpus JSON under `tmp/deckbuild-corpora/` unless `--out` is provided
+- a JSON eval result
+- a markdown summary report
+
 ### Corpus sources
 
 #### Frozen simulated corpus

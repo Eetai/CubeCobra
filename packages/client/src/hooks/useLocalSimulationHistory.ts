@@ -14,7 +14,10 @@ import {
   writeLocalSimulationStore,
 } from '../utils/draftSimulatorLocalStorage';
 
-export type CurrentRunSetup = Pick<SimulationSetupResponse, 'initialPacks' | 'packSteps' | 'numSeats'> | null;
+export type CurrentRunSetup = Pick<
+  SimulationSetupResponse,
+  'cubeId' | 'initialPacks' | 'packSteps' | 'numSeats' | 'basics' | 'deckbuildSpells' | 'deckbuildLands'
+> | null;
 
 interface UseLocalSimulationHistoryArgs {
   cubeId: string;

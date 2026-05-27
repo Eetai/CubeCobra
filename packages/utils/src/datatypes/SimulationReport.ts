@@ -137,7 +137,10 @@ export interface SimulationRunData extends SimulationSummary {
   cardMeta: Record<string, CardMeta>;
   slimPools: SlimPool[];
   deckBuilds?: BuiltDeck[]; // one per slim pool, in order; absent on old runs
-  setupData?: Pick<SimulationSetupResponse, 'initialPacks' | 'packSteps' | 'numSeats'>; // enables exact filtered stat recomputation after reload
+  setupData?: Pick<
+    SimulationSetupResponse,
+    'cubeId' | 'initialPacks' | 'packSteps' | 'numSeats' | 'basics' | 'deckbuildSpells' | 'deckbuildLands' | 'deckbuildVariant'
+  >; // enables exact filtered stat recomputation after reload and deckbuild corpus export
   randomTrashByPool?: string[][]; // ordered random-trash removals per pool; absent on old runs
 }
 
@@ -154,6 +157,42 @@ export interface BuiltDeck {
   mainboard: string[];
   sideboard: string[];
   deckbuildRatings?: { oracle: string; rating: number }[];
+  deckbuildTrace?: {
+    phase1Seed: { step: number; oracle: string; rating: number }[];
+    phase2Picks: { step: number; oracle: string; rating: number }[];
+    basicsAdded: string[];
+  };
+  optimizationTrace?: {
+    strategy: string;
+    step: number;
+    addOracle: string;
+    cutOracle: string;
+    gain: number;
+  }[];
+  repairEvaluationTrace?: {
+    strategy: string;
+    step: number;
+    candidateOracle: string;
+    replacementOracle: string;
+    candidateRating: number;
+    replacementRating: number;
+    gain: number;
+    applied: boolean;
+    savedByRedraft?: boolean;
+    redraftPickOracle?: string;
+    redraftBeatenByOracles?: string[];
+  }[];
+  phase2Audit?: Record<
+    string,
+    {
+      bestRank: number | null;
+      bestRating: number | null;
+      bestGapToPick: number | null;
+      timesConsidered: number;
+      timesTop10: number;
+      finalRank: number | null;
+    }
+  >;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,4 +267,5 @@ export interface SimulationSetupResponse {
   // Cube's custom deck size settings (defaults: 23 spells + 17 lands)
   deckbuildSpells?: number;
   deckbuildLands?: number;
+  deckbuildVariant?: string;
 }

@@ -98,6 +98,8 @@ const DraftSimulatorBottomSection: React.FC<{
   selectedCardOracles: string[];
   handleToggleSelectedDeckCard: (oracleId: string) => void;
   selectedDeckCardOracles: string[];
+  handleToggleSelectedSideboardCard: (oracleId: string) => void;
+  selectedSideboardCardOracles: string[];
   handleToggleSelectedP1P1Card: (oracleId: string) => void;
   selectedP1P1CardOracles: string[];
   handleToggleSelectedFirstColorPick: (oracleId: string) => void;
@@ -108,6 +110,7 @@ const DraftSimulatorBottomSection: React.FC<{
   secondColorPickCounts: Map<string, number>;
   deckCardPoolIndices: Map<string, number[]>;
   visibleDeckCounts: Map<string, number>;
+  visibleSideboardCounts: Map<string, number>;
   inDeckOracles: Set<string> | null;
   inSideboardOracles: Set<string> | null;
   deckInclusionPct: Map<string, number>;
@@ -165,6 +168,8 @@ const DraftSimulatorBottomSection: React.FC<{
   selectedCardOracles,
   handleToggleSelectedDeckCard,
   selectedDeckCardOracles,
+  handleToggleSelectedSideboardCard,
+  selectedSideboardCardOracles,
   handleToggleSelectedP1P1Card,
   selectedP1P1CardOracles,
   handleToggleSelectedFirstColorPick,
@@ -175,6 +180,7 @@ const DraftSimulatorBottomSection: React.FC<{
   secondColorPickCounts,
   deckCardPoolIndices,
   visibleDeckCounts,
+  visibleSideboardCounts,
   inDeckOracles,
   inSideboardOracles,
   deckInclusionPct,
@@ -384,6 +390,8 @@ const DraftSimulatorBottomSection: React.FC<{
               selectedCardOracles={selectedCardOracles}
               onSelectDeckCard={handleToggleSelectedDeckCard}
               selectedDeckCardOracles={selectedDeckCardOracles}
+              onSelectSideboardCard={handleToggleSelectedSideboardCard}
+              selectedSideboardCardOracles={selectedSideboardCardOracles}
               onSelectP1P1Card={handleToggleSelectedP1P1Card}
               selectedP1P1CardOracles={selectedP1P1CardOracles}
               onSelectFirstColorPick={handleToggleSelectedFirstColorPick}
@@ -393,6 +401,7 @@ const DraftSimulatorBottomSection: React.FC<{
               selectedSecondColorPickOracles={selectedSecondColorPickOracles}
               secondColorPickCounts={secondColorPickCounts}
               visibleDeckCounts={visibleDeckCounts}
+              visibleSideboardCounts={visibleSideboardCounts}
               inDeckOracles={inDeckOracles}
               deckInclusionPct={deckInclusionPct}
               visiblePoolCounts={visiblePoolCounts}

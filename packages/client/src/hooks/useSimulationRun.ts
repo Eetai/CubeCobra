@@ -51,6 +51,7 @@ interface UseSimulationRunArgs {
   numSeats: number;
   gpuBatchSize: number;
   selectedFormatId: number;
+  deckbuildVariant: string;
   buildAllDecks: (
     slimPools: SlimPool[],
     setup: SimulationSetupResponse,
@@ -203,6 +204,7 @@ export default function useSimulationRun({
   numSeats,
   gpuBatchSize,
   selectedFormatId,
+  deckbuildVariant,
   buildAllDecks,
   runClientSimulation,
   nextLowerGpuBatchSize,
@@ -359,6 +361,8 @@ export default function useSimulationRun({
         return;
       }
 
+      const setupDataForRun: SimulationSetupResponse = { ...setupData, deckbuildVariant };
+
       setSimPhase('loadmodel');
       setModelLoadProgress(0);
       const modelLoadStart = performance.now();
@@ -399,13 +403,13 @@ export default function useSimulationRun({
       );
       throwIfAborted(controller.signal);
       simulationMs = performance.now() - simulationStart;
-      onSetCurrentRunSetup(setupData as SimulationSetupResponse);
+      onSetCurrentRunSetup(setupDataForRun);
 
       setSimPhase('deckbuild');
       const deckbuildStart = performance.now();
       const deckResult = await runWithGpuRetry(
         'Deckbuilding',
-        (bs) => buildAllDecks(report.slimPools, setupData as SimulationSetupResponse, controller.signal, bs),
+        (bs) => buildAllDecks(report.slimPools, setupDataForRun, controller.signal, bs),
       );
       throwIfAborted(controller.signal);
       deckbuildMs = performance.now() - deckbuildStart;
@@ -430,7 +434,16 @@ export default function useSimulationRun({
         ...runDataBase,
         cardMeta: mergedCardMeta,
         deckBuilds: deckResult.decks,
-        setupData: report.setupData,
+        setupData: {
+          cubeId: setupDataForRun.cubeId,
+          initialPacks: setupDataForRun.initialPacks,
+          packSteps: setupDataForRun.packSteps,
+          numSeats: setupDataForRun.numSeats,
+          basics: setupDataForRun.basics,
+          deckbuildSpells: setupDataForRun.deckbuildSpells,
+          deckbuildLands: setupDataForRun.deckbuildLands,
+          deckbuildVariant,
+        },
         timings,
       };
       const ts = Date.now();

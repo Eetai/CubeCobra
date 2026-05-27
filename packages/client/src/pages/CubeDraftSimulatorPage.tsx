@@ -76,6 +76,7 @@ import {
   localRecommend,
   WebGLInferenceError,
 } from '../utils/draftBot';
+import { buildDeckbuildEvalCorpusFromSimulation } from '../utils/deckbuildEval';
 import { buildClusterRecommendationInput } from '../utils/draftSimulatorClustering';
 import { prefetchClientSimulationResources } from '../utils/draftSimulatorSetup';
 import {
@@ -303,6 +304,13 @@ const GPU_BATCH_OPTIONS = [
   { value: '32', label: '32 - safe' },
   { value: '64', label: '64 - balanced' },
   { value: '128', label: '128 - strong GPU' },
+];
+const DECKBUILD_VARIANT_OPTIONS = [
+  { value: 'baseline', label: 'Default deckbuilder' },
+  { value: 'targeted-repair-2', label: 'Targeted Repair-2' },
+  { value: 'land-trim-2', label: 'Land Trim-2' },
+  { value: 'land-trim-stable', label: 'Land Trim-Stable' },
+  { value: 'hillclimb-3', label: 'Hillclimb-3' },
 ];
 function nextLowerGpuBatchSize(batchSize: number): number | null {
   const lowerOptions = GPU_BATCH_OPTIONS.map((option) => parseInt(option.value, 10))
@@ -584,7 +592,15 @@ async function runClientSimulation(
     cardMeta,
     slimPools,
     simulatedPools,
-    setupData: { initialPacks, packSteps, numSeats },
+    setupData: {
+      cubeId: setup.cubeId,
+      initialPacks,
+      packSteps,
+      numSeats,
+      basics: setup.basics,
+      deckbuildSpells: setup.deckbuildSpells,
+      deckbuildLands: setup.deckbuildLands,
+    },
   };
 }
 
@@ -956,6 +972,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
   const [numSeats, setNumSeats] = useState(8);
   const [gpuBatchSize, setGpuBatchSize] = useState(() => (isMobileLayout ? 4 : 32));
   const [selectedFormatId, setSelectedFormatId] = useState(cube.defaultFormat ?? -1);
+  const [deckbuildVariant, setDeckbuildVariant] = useState('baseline');
 
   // Session-level cache — avoids recomputing embeddings when switching between runs
   const embeddingsCache = useRef<Map<string, number[][] | Record<string, number[]> | null>>(new Map());
@@ -969,6 +986,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
   // Card pool view
   const [selectedCardOracles, setSelectedCardOracles] = useState<string[]>([]);
   const [selectedDeckCardOracles, setSelectedDeckCardOracles] = useState<string[]>([]);
+  const [selectedSideboardCardOracles, setSelectedSideboardCardOracles] = useState<string[]>([]);
   const [selectedP1P1CardOracles, setSelectedP1P1CardOracles] = useState<string[]>([]);
   const [selectedFirstColorPickOracles, setSelectedFirstColorPickOracles] = useState<string[]>([]);
   const [selectedSecondColorPickOracles, setSelectedSecondColorPickOracles] = useState<string[]>([]);
@@ -996,6 +1014,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
   const resetViewSelection = useCallback(() => {
     setSelectedCardOracles([]);
     setSelectedDeckCardOracles([]);
+    setSelectedSideboardCardOracles([]);
     setSelectedP1P1CardOracles([]);
     setSelectedFirstColorPickOracles([]);
     setSelectedSecondColorPickOracles([]);
@@ -1061,7 +1080,21 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
           maxSpells: setup.deckbuildSpells,
           maxLands: setup.deckbuildLands,
         }));
-        const decks = await localBatchDeckbuild(entries, batchSize, signal);
+        const deckbuildOptions =
+          deckbuildVariant === 'hillclimb-3'
+            ? { maxPostBuildHillClimbSwaps: 3 }
+            : deckbuildVariant === 'land-trim-stable'
+              ? { landTrimUntilStable: true }
+            : deckbuildVariant === 'land-trim-2'
+              ? { landTrimMaxSwaps: 2 }
+            : deckbuildVariant === 'targeted-repair-2'
+              ? {
+                  targetedRepairMaxSwaps: 2,
+                  targetedRepairTopCandidates: 4,
+                  targetedRepairBottomMainboard: 6,
+                }
+              : undefined;
+        const decks = await localBatchDeckbuild(entries, batchSize, signal, deckbuildOptions);
         // Collect metadata for any basic oracle IDs that appear in mainboards but aren't in setup.cardMeta
         const basicCardMeta: Record<string, CardMeta> = {};
         for (const basic of setup.basics) {
@@ -1084,7 +1117,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
         return null;
       }
     },
-    [gpuBatchSize],
+    [deckbuildVariant, gpuBatchSize],
   );
 
   const availableFormats = useMemo(
@@ -1123,6 +1156,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
     numSeats,
     gpuBatchSize,
     selectedFormatId,
+    deckbuildVariant,
     buildAllDecks,
     runClientSimulation,
     nextLowerGpuBatchSize,
@@ -1132,6 +1166,22 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
     onSetStorageNotice: setStorageNotice,
     onPersistCompletedRun: handlePersistCompletedRun,
   });
+
+  const handleExportDeckbuildEvalCorpus = useCallback(() => {
+    if (!displayRunData || !currentRunSetup) return;
+    const corpus = buildDeckbuildEvalCorpusFromSimulation(displayRunData, currentRunSetup, {
+      id: `${cubeId}-${displayRunData.generatedAt.slice(0, 10)}-deckbuild-eval`,
+    });
+    const blob = new Blob([JSON.stringify(corpus, null, 2) + '\n'], { type: 'application/json' });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${corpus.id}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
+  }, [cubeId, currentRunSetup, displayRunData]);
 
 
   const activeDecks = displayRunData?.deckBuilds ?? null;
@@ -1197,6 +1247,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
     () => ({
       selectedCardOracles,
       selectedDeckCardOracles,
+      selectedSideboardCardOracles,
       selectedP1P1CardOracles,
       selectedFirstColorPickOracles,
       selectedSecondColorPickOracles,
@@ -1205,12 +1256,13 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
       focusedPoolIndex,
       focusedPoolViewMode,
     }),
-    [selectedCardOracles, selectedDeckCardOracles, selectedP1P1CardOracles, selectedFirstColorPickOracles, selectedSecondColorPickOracles, selectedSkeletonId, selectedArchetype, focusedPoolIndex, focusedPoolViewMode],
+    [selectedCardOracles, selectedDeckCardOracles, selectedSideboardCardOracles, selectedP1P1CardOracles, selectedFirstColorPickOracles, selectedSecondColorPickOracles, selectedSkeletonId, selectedArchetype, focusedPoolIndex, focusedPoolViewMode],
   );
   const selectionSetters = useMemo<DraftSimulatorSelectionSetters>(
     () => ({
       setSelectedCardOracles,
       setSelectedDeckCardOracles,
+      setSelectedSideboardCardOracles,
       setSelectedP1P1CardOracles,
       setSelectedFirstColorPickOracles,
       setSelectedSecondColorPickOracles,
@@ -1218,7 +1270,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
       setSelectedSkeletonId,
       setFocusedPoolIndex,
     }),
-    [setSelectedCardOracles, setSelectedDeckCardOracles, setSelectedP1P1CardOracles, setSelectedFirstColorPickOracles, setSelectedSecondColorPickOracles, setSelectedArchetype, setSelectedSkeletonId, setFocusedPoolIndex],
+    [setSelectedCardOracles, setSelectedDeckCardOracles, setSelectedSideboardCardOracles, setSelectedP1P1CardOracles, setSelectedFirstColorPickOracles, setSelectedSecondColorPickOracles, setSelectedArchetype, setSelectedSkeletonId, setFocusedPoolIndex],
   );
 
   // Top Gwen archetype labels per color pair, for the Deck Color Distribution chart
@@ -1292,6 +1344,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
   const {
     selectedCards,
     selectedDeckCards,
+    selectedSideboardCards,
     selectedP1P1Cards,
     selectedCard,
     selectedFirstColorPickCards,
@@ -1303,6 +1356,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
     deckInclusionPct,
     deckCardPoolIndices,
     visibleDeckCounts,
+    visibleSideboardCounts,
     inDeckOracles,
     inSideboardOracles,
     visibleCardStats,
@@ -1388,6 +1442,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
     setters: selectionSetters,
     selectedCards,
     selectedDeckCards,
+    selectedSideboardCards,
     selectedP1P1Cards,
     selectedFirstColorPickCards,
     selectedSecondColorPickCards,
@@ -1408,6 +1463,14 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
 
   const handleToggleSelectedDeckCard = useCallback((oracleId: string) => {
     setSelectedDeckCardOracles((current) => {
+      if (current.includes(oracleId)) return current.filter((id) => id !== oracleId);
+      if (current.length < 2) return [...current, oracleId];
+      return [current[1]!, oracleId];
+    });
+  }, []);
+
+  const handleToggleSelectedSideboardCard = useCallback((oracleId: string) => {
+    setSelectedSideboardCardOracles((current) => {
       if (current.includes(oracleId)) return current.filter((id) => id !== oracleId);
       if (current.length < 2) return [...current, oracleId];
       return [current[1]!, oracleId];
@@ -1662,6 +1725,8 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
       selectedCardOracles={selectedCardOracles}
       handleToggleSelectedDeckCard={handleToggleSelectedDeckCard}
       selectedDeckCardOracles={selectedDeckCardOracles}
+      handleToggleSelectedSideboardCard={handleToggleSelectedSideboardCard}
+      selectedSideboardCardOracles={selectedSideboardCardOracles}
       handleToggleSelectedP1P1Card={handleToggleSelectedP1P1Card}
       selectedP1P1CardOracles={selectedP1P1CardOracles}
       handleToggleSelectedFirstColorPick={handleToggleSelectedFirstColorPick}
@@ -1672,6 +1737,7 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
       secondColorPickCounts={secondColorPickCounts}
       deckCardPoolIndices={deckCardPoolIndices}
       visibleDeckCounts={visibleDeckCounts}
+      visibleSideboardCounts={visibleSideboardCounts}
       inDeckOracles={inDeckOracles}
       inSideboardOracles={inSideboardOracles}
       deckInclusionPct={deckInclusionPct}
@@ -1879,11 +1945,21 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
             {status === 'completed' && !isRunning && (
               <Card className="border-green-700">
                 <CardBody>
-                  <Text sm className="text-text">
-                    {storageNotice?.startsWith('Results are shown below')
-                      ? 'Simulation complete — results are displayed below.'
-                      : 'Simulation complete — results are stored locally in this browser and displayed below.'}
-                  </Text>
+                  <Flexbox direction="row" justify="between" alignItems="center" className="gap-3 flex-wrap">
+                    <Text sm className="text-text">
+                      {storageNotice?.startsWith('Results are shown below')
+                        ? 'Simulation complete — results are displayed below.'
+                        : 'Simulation complete — results are stored locally in this browser and displayed below.'}
+                    </Text>
+                    <Button
+                      type="button"
+                      color="secondary"
+                      disabled={!displayRunData || !currentRunSetup}
+                      onClick={handleExportDeckbuildEvalCorpus}
+                    >
+                      Export Deckbuild Eval Corpus
+                    </Button>
+                  </Flexbox>
                 </CardBody>
               </Card>
             )}
@@ -1987,6 +2063,25 @@ const CubeDraftSimulatorPage: React.FC<CubeDraftSimulatorPageProps> = ({ cube })
                       Controls how many picks the ML model scores in a single GPU call. Higher values run faster on a
                       strong GPU but use more VRAM — if simulation crashes or stalls, try a lower value. The simulator
                       will automatically retry at a lower batch size if it detects an out-of-memory error.
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-medium text-text-secondary" htmlFor="draftSimulatorDeckbuildVariant">
+                      Deckbuild strategy
+                    </label>
+                    <Select
+                      id="draftSimulatorDeckbuildVariant"
+                      options={DECKBUILD_VARIANT_OPTIONS}
+                      value={deckbuildVariant}
+                      setValue={setDeckbuildVariant}
+                      disabled={isRunning}
+                    />
+                    <p className="text-xs text-text-secondary leading-snug">
+                      Changes only the post-draft deckbuilding step. <code>Targeted Repair-2</code> does a cheap
+                      ML-guided cleanup pass over a few weak included nonlands versus a few strong excluded nonlands.
+                      <code>Land Trim-2</code> challenges a couple of weak included nonbasic lands against basic-land
+                      replacements. <code>Land Trim-Stable</code> keeps trimming suspect nonbasics until no positive
+                      land-to-basic replacement remains. <code>Hillclimb-3</code> is stronger but much more expensive.
                     </p>
                   </div>
                   <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer select-none">

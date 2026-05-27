@@ -141,7 +141,7 @@ function buildActiveFilterPreview({
 
 interface UseDraftSimulatorSelectionArgs {
   data: DraftSimulatorDerivedData;
-  state: Pick<DraftSimulatorSelectionState, 'selectedCardOracles' | 'selectedDeckCardOracles' | 'selectedP1P1CardOracles' | 'selectedFirstColorPickOracles' | 'selectedSecondColorPickOracles' | 'selectedSkeletonId' | 'selectedArchetype'>;
+  state: Pick<DraftSimulatorSelectionState, 'selectedCardOracles' | 'selectedDeckCardOracles' | 'selectedSideboardCardOracles' | 'selectedP1P1CardOracles' | 'selectedFirstColorPickOracles' | 'selectedSecondColorPickOracles' | 'selectedSkeletonId' | 'selectedArchetype'>;
   filteredCardStatsCache: { current: Map<string, CardStats[]> };
   computeFilteredCardStats: (
     setup: NonNullable<DraftSimulatorDerivedData['currentRunSetup']>,
@@ -157,6 +157,7 @@ export default function useDraftSimulatorSelection({
   state: {
     selectedCardOracles,
     selectedDeckCardOracles,
+    selectedSideboardCardOracles,
     selectedP1P1CardOracles,
     selectedFirstColorPickOracles,
     selectedSecondColorPickOracles,
@@ -186,6 +187,16 @@ export default function useDraftSimulatorSelection({
             .filter((c): c is CardStats => !!c)
         : [],
     [displayRunData, selectedDeckCardOracles],
+  );
+
+  const selectedSideboardCards = useMemo(
+    () =>
+      displayRunData
+        ? selectedSideboardCardOracles
+            .map((oracle) => displayRunData.cardStats.find((c) => c.oracle_id === oracle) ?? null)
+            .filter((c): c is CardStats => !!c)
+        : [],
+    [displayRunData, selectedSideboardCardOracles],
   );
 
   const selectedP1P1Cards = useMemo(
@@ -241,6 +252,19 @@ export default function useDraftSimulatorSelection({
     const map = new Map<string, number[]>();
     for (let i = 0; i < activeDecks.length; i++) {
       for (const oracleId of activeDecks[i]!.mainboard) {
+        const entry = map.get(oracleId);
+        if (entry) entry.push(i);
+        else map.set(oracleId, [i]);
+      }
+    }
+    return map;
+  }, [activeDecks]);
+
+  const sideboardCardPoolIndices = useMemo<Map<string, number[]>>(() => {
+    if (!activeDecks) return new Map();
+    const map = new Map<string, number[]>();
+    for (let i = 0; i < activeDecks.length; i++) {
+      for (const oracleId of activeDecks[i]!.sideboard) {
         const entry = map.get(oracleId);
         if (entry) entry.push(i);
         else map.set(oracleId, [i]);
@@ -311,6 +335,11 @@ export default function useDraftSimulatorSelection({
       if (poolIndices) filterSets.push(new Set<number>(poolIndices));
     }
 
+    for (const oracleId of selectedSideboardCardOracles) {
+      const poolIndices = sideboardCardPoolIndices.get(oracleId);
+      if (poolIndices) filterSets.push(new Set<number>(poolIndices));
+    }
+
     for (const card of selectedP1P1Cards) {
       const indices = p1p1CardPoolIndices.get(card.oracle_id);
       if (indices) filterSets.push(new Set<number>(indices));
@@ -332,10 +361,12 @@ export default function useDraftSimulatorSelection({
     selectedSkeletonId,
     selectedCards,
     selectedDeckCardOracles,
+    selectedSideboardCardOracles,
     selectedP1P1Cards,
     selectedFirstColorPickOracles,
     selectedSecondColorPickOracles,
     deckCardPoolIndices,
+    sideboardCardPoolIndices,
     p1p1CardPoolIndices,
     firstColorPickPoolIndices,
     secondColorPickPoolIndices,
@@ -390,6 +421,17 @@ export default function useDraftSimulatorSelection({
     const sideboardOracles = new Set<string>();
     for (const deck of filteredDecks) for (const oracleId of deck.sideboard) sideboardOracles.add(oracleId);
     return sideboardOracles;
+  }, [filteredDecks]);
+
+  const visibleSideboardCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (!filteredDecks) return counts;
+    for (const deck of filteredDecks) {
+      for (const oracleId of deck.sideboard) {
+        counts.set(oracleId, (counts.get(oracleId) ?? 0) + 1);
+      }
+    }
+    return counts;
   }, [filteredDecks]);
 
   const visibleCardStats = useMemo(() => {
@@ -500,6 +542,7 @@ export default function useDraftSimulatorSelection({
   return {
     selectedCards,
     selectedDeckCards,
+    selectedSideboardCards,
     selectedP1P1Cards,
     selectedCard,
     selectedFirstColorPickCards,
@@ -511,6 +554,7 @@ export default function useDraftSimulatorSelection({
     deckInclusionPct,
     deckCardPoolIndices,
     visibleDeckCounts,
+    visibleSideboardCounts,
     inDeckOracles,
     inSideboardOracles,
     visibleCardStats,

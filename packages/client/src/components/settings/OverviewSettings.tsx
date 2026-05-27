@@ -24,10 +24,18 @@ interface AlertProps {
   message: string;
 }
 
+const sanitizeOverviewCube = (cube: Cube): Cube => ({
+  ...cube,
+  categoryOverride: cube.categoryOverride && CUBE_CATEGORIES.includes(cube.categoryOverride) ? cube.categoryOverride : undefined,
+  categoryPrefixes: Array.isArray(cube.categoryPrefixes)
+    ? cube.categoryPrefixes.filter((prefix): prefix is string => typeof prefix === 'string' && CUBE_PREFIXES.includes(prefix))
+    : [],
+});
+
 const OverviewSettings: React.FC = () => {
   const { cube } = useContext(CubeContext);
   const { csrfFetch } = useContext(CSRFContext);
-  const [state, setState] = useState<Cube>(JSON.parse(JSON.stringify(cube)));
+  const [state, setState] = useState<Cube>(sanitizeOverviewCube(JSON.parse(JSON.stringify(cube))));
   const [imagename, setImagename] = useState(cube.imageName);
   const [alerts, setAlerts] = useState<AlertProps[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
@@ -64,7 +72,9 @@ const OverviewSettings: React.FC = () => {
           image: state.image,
           brief: state.brief,
           categoryOverride: state.categoryOverride,
-          categoryPrefixes: state.categoryPrefixes,
+          categoryPrefixes: Array.isArray(state.categoryPrefixes)
+            ? state.categoryPrefixes.filter((prefix) => CUBE_PREFIXES.includes(prefix))
+            : [],
         },
       }),
     });
@@ -78,7 +88,7 @@ const OverviewSettings: React.FC = () => {
   }, [csrfFetch, state]);
 
   const resetChanges = () => {
-    setState(JSON.parse(JSON.stringify(cube)));
+    setState(sanitizeOverviewCube(JSON.parse(JSON.stringify(cube))));
     setImagename(cube.imageName);
     setAlerts([]);
   };

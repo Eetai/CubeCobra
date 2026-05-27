@@ -21,7 +21,7 @@
  */
 
 import { cdnUrl } from '@utils/cdnUrl';
-import { BasicLandInfo } from '@utils/datatypes/SimulationReport';
+import { BasicLandInfo, BuiltDeck } from '@utils/datatypes/SimulationReport';
 
 // Models are served only from the CDN. We deliberately do NOT fall back to the
 // app origin: the bundle is ~70 MB and proxying it through our server would
@@ -644,11 +644,34 @@ export interface DeckbuildEntry {
   /** Card metadata keyed by oracle_id — needs type, colorIdentity, parsedCost, mlOracleId */
   cardMeta: Record<
     string,
-    { type: string; colorIdentity: string[]; parsedCost?: string[]; producedMana?: string[]; mlOracleId?: string }
+    {
+      type: string;
+      colorIdentity: string[];
+      parsedCost?: string[];
+      producedMana?: string[];
+      mlOracleId?: string;
+      isManaFixingLand?: boolean;
+    }
   >;
   basics: BasicLandInfo[];
   maxSpells?: number;
   maxLands?: number;
+}
+
+export interface LocalDeckbuildOptions {
+  seedCount?: number;
+  auditTrackedOracleIds?: Set<string>;
+  postBuildSingleSwap?: boolean;
+  maxPostBuildHillClimbSwaps?: number;
+  targetedRepairMaxSwaps?: number;
+  targetedRepairTopCandidates?: number;
+  targetedRepairBottomMainboard?: number;
+  landTrimMaxSwaps?: number;
+  landTrimUntilStable?: boolean;
+  refillSlotsPerRound?: number;
+  refillRounds?: number;
+  recordOptimizationTrace?: boolean;
+  recordDetailedTrace?: boolean;
 }
 
 const throwIfAborted = (signal?: AbortSignal): void => {
@@ -659,8 +682,6 @@ const throwIfAborted = (signal?: AbortSignal): void => {
 const oracleIsLand = (oracle: string, meta: DeckbuildEntry['cardMeta']): boolean =>
   /\bLand\b/.test(meta[oracle]?.type ?? '');
 
-
-
 const getDeckCardMeta = (
   oracle: string,
   cardMeta: DeckbuildEntry['cardMeta'],
@@ -669,6 +690,38 @@ const getDeckCardMeta = (
 
 const deckCardColors = (card: DeckCardMeta | BasicLandInfo): string[] =>
   (card.producedMana ?? []).length > 0 ? (card.producedMana ?? []) : (card.colorIdentity ?? []);
+
+const assessDeckMainColors = (cards: string[], cardMeta: DeckbuildEntry['cardMeta']): Set<string> => {
+  const colors = new Set<string>();
+  for (const oracle of cards) {
+    const meta = cardMeta[oracle];
+    if (!meta) continue;
+    if (oracleIsLand(oracle, cardMeta)) continue;
+    for (const color of meta.colorIdentity ?? []) {
+      if (['W', 'U', 'B', 'R', 'G'].includes(color)) colors.add(color);
+    }
+  }
+  return colors;
+};
+
+const oracleIsSuspectNonbasicLand = (
+  oracle: string,
+  mainDeckColors: Set<string>,
+  cardMeta: DeckbuildEntry['cardMeta'],
+): boolean => {
+  if (!oracleIsLand(oracle, cardMeta)) return false;
+  const meta = cardMeta[oracle];
+  const type = meta?.type?.toLowerCase() ?? '';
+  if (type.includes('basic land')) return false;
+  if (mainDeckColors.size === 0) return false;
+  const landColors = deckCardColors(meta ?? { type: '', colorIdentity: [] });
+  if ((meta?.isManaFixingLand ?? false) && landColors.length === 0) return true;
+  if (landColors.length >= 2) {
+    const sharedColors = landColors.filter((color) => mainDeckColors.has(color)).length;
+    if (sharedColors < 2) return true;
+  }
+  return landColors.some((color) => !mainDeckColors.has(color));
+};
 
 export function colorDemandPerSource(cards: Array<DeckCardMeta | BasicLandInfo>): Record<string, number> {
   const demand: Record<string, number> = { W: 0, U: 0, B: 0, R: 0, G: 0 };
@@ -768,9 +821,26 @@ export async function localBatchDeckbuild(
   entries: DeckbuildEntry[],
   chunkSize?: number,
   signal?: AbortSignal,
-): Promise<{ mainboard: string[]; sideboard: string[]; deckbuildRatings?: RatedCard[] }[]> {
+  options?: Set<string> | LocalDeckbuildOptions,
+): Promise<BuiltDeck[]> {
   throwIfAborted(signal);
   if (!draftBotLoaded || entries.length === 0) return entries.map(() => ({ mainboard: [], sideboard: [] }));
+
+  const normalizedOptions: LocalDeckbuildOptions =
+    options instanceof Set ? { auditTrackedOracleIds: options } : (options ?? {});
+  const seedCount = normalizedOptions.seedCount ?? 10;
+  const auditTrackedOracleIds = normalizedOptions.auditTrackedOracleIds;
+  const postBuildSingleSwap = !!normalizedOptions.postBuildSingleSwap;
+  const maxPostBuildHillClimbSwaps = normalizedOptions.maxPostBuildHillClimbSwaps ?? 0;
+  const targetedRepairMaxSwaps = normalizedOptions.targetedRepairMaxSwaps ?? 0;
+  const targetedRepairTopCandidates = normalizedOptions.targetedRepairTopCandidates ?? 4;
+  const targetedRepairBottomMainboard = normalizedOptions.targetedRepairBottomMainboard ?? 6;
+  const landTrimMaxSwaps = normalizedOptions.landTrimMaxSwaps ?? 0;
+  const landTrimUntilStable = !!normalizedOptions.landTrimUntilStable;
+  const refillSlotsPerRound = normalizedOptions.refillSlotsPerRound ?? 0;
+  const refillRounds = normalizedOptions.refillRounds ?? 0;
+  const recordOptimizationTrace = !!normalizedOptions.recordOptimizationTrace;
+  const recordDetailedTrace = !!normalizedOptions.recordDetailedTrace;
 
   const allPoolOracles = entries.map((e) => e.pool);
   const sharedRemapping = buildOracleRemapping(entries[0]!.cardMeta);
@@ -803,6 +873,19 @@ export async function localBatchDeckbuild(
       deckCopies: {} as Record<string, number>,
       spellCount: 0,
       landCount: 0,
+      phase2Audit: {} as Record<
+        string,
+        {
+          bestRank: number | null;
+          bestRating: number | null;
+          bestGapToPick: number | null;
+          timesConsidered: number;
+          timesTop10: number;
+          finalRank: number | null;
+        }
+      >,
+      phase1Seed: [] as { step: number; oracle: string; rating: number }[],
+      phase2Picks: [] as { step: number; oracle: string; rating: number }[],
     };
   });
 
@@ -820,7 +903,7 @@ export async function localBatchDeckbuild(
     const { fromMl } = seatMaps[s]!;
 
     for (const item of buildResults[s] ?? []) {
-      if (seat.mainboard.length >= 10) break;
+      if (seat.mainboard.length >= seedCount) break;
 
       const originals = fromMl[item.oracle] ?? [item.oracle];
       const oracle = originals.find((candidate) => (seat.remainingCounts[candidate] ?? 0) > 0);
@@ -839,6 +922,13 @@ export async function localBatchDeckbuild(
       seat.deckCopies[oracle] = existing + 1;
       seat.remainingCounts[oracle] = (seat.remainingCounts[oracle] ?? 0) - 1;
       seat.remainingCount -= 1;
+      if (recordDetailedTrace) {
+        seat.phase1Seed.push({
+          step: seat.phase1Seed.length + 1,
+          oracle,
+          rating: adjustedRating,
+        });
+      }
       if (land) seat.landCount += 1;
       else seat.spellCount += 1;
     }
@@ -888,8 +978,39 @@ export async function localBatchDeckbuild(
       const s = activeIndices[i]!;
       const seat = seats[s]!;
       const { fromMl } = seatMaps[s]!;
+      const ranked = batchResults[i] ?? [];
+      const pickedRating = ranked[0]?.rating ?? null;
+
+      if (auditTrackedOracleIds && auditTrackedOracleIds.size > 0) {
+        for (let rankIndex = 0; rankIndex < ranked.length; rankIndex += 1) {
+          const item = ranked[rankIndex]!;
+          const originals = fromMl[item.oracle] ?? [item.oracle];
+          const oracle = originals.find((candidate) => (seat.remainingCounts[candidate] ?? 0) > 0);
+          if (!oracle || !auditTrackedOracleIds.has(oracle)) continue;
+
+          const current = seat.phase2Audit[oracle] ?? {
+            bestRank: null,
+            bestRating: null,
+            bestGapToPick: null,
+            timesConsidered: 0,
+            timesTop10: 0,
+            finalRank: null,
+          };
+          const rank = rankIndex + 1;
+          current.timesConsidered += 1;
+          if (rank <= 10) current.timesTop10 += 1;
+          current.finalRank = rank;
+          if (current.bestRank === null || rank < current.bestRank) {
+            current.bestRank = rank;
+            current.bestRating = item.rating;
+            current.bestGapToPick = pickedRating !== null ? pickedRating - item.rating : null;
+          }
+          seat.phase2Audit[oracle] = current;
+        }
+      }
+
       const { oracle: bestOracle, score: bestScore } = chooseBestMappedOracle(
-        batchResults[i] ?? [],
+        ranked,
         seat.remainingCounts,
         seat.deckCopies,
         fromMl,
@@ -902,6 +1023,13 @@ export async function localBatchDeckbuild(
       seat.deckCopies[bestOracle] = (seat.deckCopies[bestOracle] ?? 0) + 1;
       seat.remainingCounts[bestOracle] = (seat.remainingCounts[bestOracle] ?? 0) - 1;
       seat.remainingCount -= 1;
+      if (recordDetailedTrace) {
+        seat.phase2Picks.push({
+          step: seat.phase2Picks.length + 1,
+          oracle: bestOracle,
+          rating: bestScore,
+        });
+      }
 
       const land = oracleIsLand(bestOracle, entries[s]!.cardMeta);
       if (land) seat.landCount += 1;
@@ -911,7 +1039,7 @@ export async function localBatchDeckbuild(
   }
 
   // Fill basics using pipsPerSource (port of master's calculateBasics)
-  return seats.map((seat, s) => {
+  const builtDecks: BuiltDeck[] = seats.map((seat, s) => {
     const entry = entries[s]!;
     const basicOracles = calculateBasicsForDeck(seat.mainboard, entry.basics, entry.cardMeta, seat.deckSize);
     const sideboardCounts = { ...seat.remainingCounts };
@@ -932,6 +1060,378 @@ export async function localBatchDeckbuild(
       mainboard: [...seat.mainboard, ...basicOracles].sort(),
       sideboard: sideboard.sort(),
       deckbuildRatings,
+      deckbuildTrace: recordDetailedTrace
+        ? {
+            phase1Seed: seat.phase1Seed,
+            phase2Picks: seat.phase2Picks,
+            basicsAdded: basicOracles,
+          }
+        : undefined,
+      optimizationTrace: recordOptimizationTrace ? [] : undefined,
+      repairEvaluationTrace: recordOptimizationTrace ? [] : undefined,
+      phase2Audit: Object.keys(seat.phase2Audit).length > 0 ? seat.phase2Audit : undefined,
     };
   });
+
+  if (
+    !postBuildSingleSwap &&
+    maxPostBuildHillClimbSwaps <= 0 &&
+    targetedRepairMaxSwaps <= 0 &&
+    landTrimMaxSwaps <= 0 &&
+    !landTrimUntilStable &&
+    (refillSlotsPerRound <= 0 || refillRounds <= 0)
+  ) {
+    return builtDecks;
+  }
+
+  if (refillSlotsPerRound > 0 && refillRounds > 0) {
+    for (let s = 0; s < builtDecks.length; s += 1) {
+      throwIfAborted(signal);
+      const deck = builtDecks[s]!;
+      const entry = entries[s]!;
+      const originalPoolSet = new Set(entry.pool);
+
+      for (let round = 0; round < refillRounds; round += 1) {
+        const removableMainboard = [...new Set(deck.mainboard)].filter(
+          (oracle) => originalPoolSet.has(oracle) && !oracleIsLand(oracle, entry.cardMeta),
+        );
+        const uniqueSideboard = [...new Set(deck.sideboard)].filter((oracle) => !oracleIsLand(oracle, entry.cardMeta));
+        if (removableMainboard.length === 0 || uniqueSideboard.length === 0) break;
+
+        const removableRanking = await localBatchDraftRanked(
+          [{ pack: removableMainboard, pool: deck.mainboard }],
+          sharedRemapping,
+          chunkSize,
+          cubeCtx,
+        );
+        const weakestCards = (removableRanking[0] ?? [])
+          .slice(-Math.min(refillSlotsPerRound, removableMainboard.length))
+          .map((item) => item.oracle);
+        if (weakestCards.length === 0) break;
+
+        const removedCards: string[] = [];
+        for (const cutOracle of weakestCards) {
+          const cutIndex = deck.mainboard.indexOf(cutOracle);
+          if (cutIndex < 0) continue;
+          deck.mainboard.splice(cutIndex, 1);
+          deck.sideboard.push(cutOracle);
+          removedCards.push(cutOracle);
+        }
+        if (removedCards.length === 0) break;
+
+        for (let slot = 0; slot < removedCards.length; slot += 1) {
+          const refillCandidates = [...new Set(deck.sideboard)].filter((oracle) => !oracleIsLand(oracle, entry.cardMeta));
+          if (refillCandidates.length === 0) break;
+
+          const refillRanking = await localBatchDraftRanked(
+            [{ pack: refillCandidates, pool: deck.mainboard }],
+            sharedRemapping,
+            chunkSize,
+            cubeCtx,
+          );
+          const bestOracle = refillRanking[0]?.[0]?.oracle;
+          if (!bestOracle) break;
+
+          const addIndex = deck.sideboard.indexOf(bestOracle);
+          if (addIndex < 0) break;
+          deck.sideboard.splice(addIndex, 1);
+          deck.mainboard.push(bestOracle);
+          if (recordOptimizationTrace) {
+            deck.optimizationTrace?.push({
+              strategy: `refill-${refillSlotsPerRound}${refillRounds > 1 ? `x${refillRounds}` : ''}`,
+              step: deck.optimizationTrace.length + 1,
+              addOracle: bestOracle,
+              cutOracle: removedCards[slot] ?? '__unknown__',
+              gain: Number.NaN,
+            });
+          }
+        }
+
+        deck.mainboard.sort();
+        deck.sideboard.sort();
+      }
+    }
+  }
+
+  for (let s = 0; s < builtDecks.length; s += 1) {
+    throwIfAborted(signal);
+    const deck = builtDecks[s]!;
+    const entry = entries[s]!;
+    const originalPoolSet = new Set(entry.pool);
+
+    if (landTrimMaxSwaps > 0 || landTrimUntilStable) {
+      const landTrimStrategy = landTrimUntilStable ? 'land-trim-stable' : `land-trim-${landTrimMaxSwaps}`;
+      const maxLandTrimPasses = landTrimUntilStable ? 5 : landTrimMaxSwaps;
+      const basicCandidates = [...new Set(entry.basics.map((basic) => basic.oracleId))];
+      const protectedLands = new Set<string>();
+      for (let iter = 0; iter < maxLandTrimPasses; iter += 1) {
+        const mainDeckColors = assessDeckMainColors(deck.mainboard, entry.cardMeta);
+        const removableLands = [...new Set(deck.mainboard)].filter((oracle) => {
+          if (!originalPoolSet.has(oracle)) return false;
+          if (protectedLands.has(oracle)) return false;
+          return oracleIsSuspectNonbasicLand(oracle, mainDeckColors, entry.cardMeta);
+        });
+        if (removableLands.length === 0 || basicCandidates.length === 0) break;
+
+        let bestSwap:
+          | {
+              addOracle: string;
+              cutOracle: string;
+              gain: number;
+            }
+          | null = null;
+
+        for (const cutOracle of removableLands) {
+          const reducedMainboard = [...deck.mainboard];
+          const cutIndex = reducedMainboard.indexOf(cutOracle);
+          if (cutIndex < 0) continue;
+          reducedMainboard.splice(cutIndex, 1);
+          const rerank = await localBatchDraftRanked(
+            [{ pack: [cutOracle, ...basicCandidates], pool: reducedMainboard }],
+            sharedRemapping,
+            chunkSize,
+            cubeCtx,
+          );
+          const pairRanking = rerank[0] ?? [];
+          const cutScore = pairRanking.find((item) => item.oracle === cutOracle)?.rating;
+          const bestBasic = pairRanking.find((item) => basicCandidates.includes(item.oracle));
+          if (cutScore === undefined || !bestBasic) continue;
+          const gain = bestBasic.rating - cutScore;
+          if (recordOptimizationTrace) {
+            deck.repairEvaluationTrace?.push({
+              strategy: landTrimStrategy,
+              step: iter + 1,
+              candidateOracle: cutOracle,
+              replacementOracle: bestBasic.oracle,
+              candidateRating: cutScore,
+              replacementRating: bestBasic.rating,
+              gain,
+              applied: false,
+              savedByRedraft: false,
+            });
+          }
+          if (gain <= 0) {
+            protectedLands.add(cutOracle);
+            continue;
+          }
+
+          const sideboardPack = [...new Set([cutOracle, ...deck.sideboard])];
+          if (sideboardPack.length > 1) {
+            const sideboardRanking = await localBatchDraftRanked(
+              [{ pack: sideboardPack, pool: reducedMainboard }],
+              sharedRemapping,
+              chunkSize,
+              cubeCtx,
+            );
+            const fullSideboardRanking = sideboardRanking[0] ?? [];
+            const sideboardTopBand = fullSideboardRanking.slice(0, 3).map((item) => item.oracle);
+            const bestSideboardPick = sideboardTopBand[0];
+            const latestEvaluation = deck.repairEvaluationTrace
+              ?.slice()
+              .reverse()
+              .find(
+                (entry) =>
+                  entry.strategy === landTrimStrategy &&
+                  entry.step === iter + 1 &&
+                  entry.candidateOracle === cutOracle &&
+                  entry.replacementOracle === bestBasic.oracle,
+            );
+            if (latestEvaluation) {
+              latestEvaluation.redraftPickOracle = bestSideboardPick;
+              latestEvaluation.redraftBeatenByOracles = fullSideboardRanking
+                .map((item) => item.oracle)
+                .filter((oracle) => oracle !== cutOracle)
+                .slice(0, Math.max(0, fullSideboardRanking.findIndex((item) => item.oracle === cutOracle)));
+            }
+            if (sideboardTopBand.includes(cutOracle)) {
+              if (latestEvaluation) latestEvaluation.savedByRedraft = true;
+              protectedLands.add(cutOracle);
+              continue;
+            }
+          }
+
+          if (!bestSwap || gain > bestSwap.gain) {
+            bestSwap = { addOracle: bestBasic.oracle, cutOracle, gain };
+          }
+        }
+
+        if (!bestSwap) break;
+
+        const cutIndex = deck.mainboard.indexOf(bestSwap.cutOracle);
+        if (cutIndex < 0) break;
+        deck.mainboard.splice(cutIndex, 1, bestSwap.addOracle);
+        deck.sideboard.push(bestSwap.cutOracle);
+        if (recordOptimizationTrace) {
+          const appliedEvaluation = deck.repairEvaluationTrace
+            ?.slice()
+            .reverse()
+            .find(
+              (entry) =>
+                entry.strategy === landTrimStrategy &&
+                entry.step === iter + 1 &&
+                entry.candidateOracle === bestSwap.cutOracle &&
+                entry.replacementOracle === bestSwap.addOracle,
+            );
+          if (appliedEvaluation) {
+            appliedEvaluation.applied = true;
+          }
+          deck.optimizationTrace?.push({
+            strategy: landTrimStrategy,
+            step: deck.optimizationTrace.length + 1,
+            addOracle: bestSwap.addOracle,
+            cutOracle: bestSwap.cutOracle,
+            gain: bestSwap.gain,
+          });
+        }
+        deck.mainboard.sort();
+        deck.sideboard.sort();
+      }
+    }
+
+    if (targetedRepairMaxSwaps > 0) {
+      for (let iter = 0; iter < targetedRepairMaxSwaps; iter += 1) {
+        const removableMainboard = [...new Set(deck.mainboard)].filter(
+          (oracle) => originalPoolSet.has(oracle) && !oracleIsLand(oracle, entry.cardMeta),
+        );
+        const uniqueSideboard = [...new Set(deck.sideboard)].filter((oracle) => !oracleIsLand(oracle, entry.cardMeta));
+        if (removableMainboard.length === 0 || uniqueSideboard.length === 0) break;
+
+        const [removableRanking, sideboardRanking] = await Promise.all([
+          localBatchDraftRanked([{ pack: removableMainboard, pool: deck.mainboard }], sharedRemapping, chunkSize, cubeCtx),
+          localBatchDraftRanked([{ pack: uniqueSideboard, pool: deck.mainboard }], sharedRemapping, chunkSize, cubeCtx),
+        ]);
+
+        const bottomMainboard = (removableRanking[0] ?? [])
+          .slice(-Math.min(targetedRepairBottomMainboard, removableMainboard.length))
+          .map((item) => item.oracle);
+        const topSideboard = (sideboardRanking[0] ?? [])
+          .slice(0, Math.min(targetedRepairTopCandidates, uniqueSideboard.length))
+          .map((item) => item.oracle);
+        if (bottomMainboard.length === 0 || topSideboard.length === 0) break;
+
+        let bestSwap:
+          | {
+              addOracle: string;
+              cutOracle: string;
+              gain: number;
+            }
+          | null = null;
+
+        for (const addOracle of topSideboard) {
+          for (const cutOracle of bottomMainboard) {
+            const reducedMainboard = [...deck.mainboard];
+            const cutIndex = reducedMainboard.indexOf(cutOracle);
+            if (cutIndex < 0) continue;
+            reducedMainboard.splice(cutIndex, 1);
+            const rerank = await localBatchDraftRanked(
+              [{ pack: [cutOracle, addOracle], pool: reducedMainboard }],
+              sharedRemapping,
+              chunkSize,
+              cubeCtx,
+            );
+            const pairRanking = rerank[0] ?? [];
+            const addScore = pairRanking.find((item) => item.oracle === addOracle)?.rating;
+            const cutScore = pairRanking.find((item) => item.oracle === cutOracle)?.rating;
+            if (addScore === undefined || cutScore === undefined) continue;
+            const gain = addScore - cutScore;
+            if (gain <= 0) continue;
+            if (!bestSwap || gain > bestSwap.gain) bestSwap = { addOracle, cutOracle, gain };
+          }
+        }
+
+        if (!bestSwap) break;
+
+        const cutIndex = deck.mainboard.indexOf(bestSwap.cutOracle);
+        const addIndex = deck.sideboard.indexOf(bestSwap.addOracle);
+        if (cutIndex >= 0 && addIndex >= 0) {
+          deck.mainboard.splice(cutIndex, 1, bestSwap.addOracle);
+          deck.sideboard.splice(addIndex, 1, bestSwap.cutOracle);
+          if (recordOptimizationTrace) {
+            deck.optimizationTrace?.push({
+              strategy: `targeted-repair-${targetedRepairMaxSwaps}`,
+              step: deck.optimizationTrace.length + 1,
+              addOracle: bestSwap.addOracle,
+              cutOracle: bestSwap.cutOracle,
+              gain: bestSwap.gain,
+            });
+          }
+          deck.mainboard.sort();
+          deck.sideboard.sort();
+        }
+      }
+    }
+
+    const maxSwapIterations = postBuildSingleSwap ? 1 : maxPostBuildHillClimbSwaps;
+
+    for (let iter = 0; iter < maxSwapIterations; iter += 1) {
+      const removableMainboard = deck.mainboard.filter((oracle) => originalPoolSet.has(oracle));
+      const uniqueSideboard = [...new Set(deck.sideboard)];
+      if (removableMainboard.length === 0 || uniqueSideboard.length === 0) break;
+
+      const sideboardRanking = await localBatchDraftRanked(
+        [{ pack: uniqueSideboard, pool: deck.mainboard }],
+        sharedRemapping,
+        chunkSize,
+        cubeCtx,
+      );
+      const rankedSideboard = sideboardRanking[0] ?? [];
+
+      let bestSwap:
+        | {
+            addOracle: string;
+            cutOracle: string;
+            gain: number;
+          }
+        | null = null;
+
+      for (const addCandidate of rankedSideboard.slice(0, 12)) {
+        const addOracle = addCandidate.oracle;
+        const addIsLand = oracleIsLand(addOracle, entry.cardMeta);
+        const cutCandidates = removableMainboard.filter((oracle) => oracleIsLand(oracle, entry.cardMeta) === addIsLand);
+        for (const cutOracle of cutCandidates) {
+          const reducedMainboard = [...deck.mainboard];
+          const cutIndex = reducedMainboard.indexOf(cutOracle);
+          if (cutIndex < 0) continue;
+          reducedMainboard.splice(cutIndex, 1);
+          const rerank = await localBatchDraftRanked(
+            [{ pack: [cutOracle, addOracle], pool: reducedMainboard }],
+            sharedRemapping,
+            chunkSize,
+            cubeCtx,
+          );
+          const pairRanking = rerank[0] ?? [];
+          const addScore = pairRanking.find((item) => item.oracle === addOracle)?.rating;
+          const cutScore = pairRanking.find((item) => item.oracle === cutOracle)?.rating;
+          if (addScore === undefined || cutScore === undefined) continue;
+          const gain = addScore - cutScore;
+          if (gain <= 0) continue;
+          if (!bestSwap || gain > bestSwap.gain) {
+            bestSwap = { addOracle, cutOracle, gain };
+          }
+        }
+      }
+
+      if (!bestSwap) break;
+
+      const cutIndex = deck.mainboard.indexOf(bestSwap.cutOracle);
+      const addIndex = deck.sideboard.indexOf(bestSwap.addOracle);
+      if (cutIndex >= 0 && addIndex >= 0) {
+        deck.mainboard.splice(cutIndex, 1, bestSwap.addOracle);
+        deck.sideboard.splice(addIndex, 1, bestSwap.cutOracle);
+        if (recordOptimizationTrace) {
+          deck.optimizationTrace?.push({
+            strategy: postBuildSingleSwap ? 'swap-1' : `hillclimb-${maxPostBuildHillClimbSwaps}`,
+            step: deck.optimizationTrace.length + 1,
+            addOracle: bestSwap.addOracle,
+            cutOracle: bestSwap.cutOracle,
+            gain: bestSwap.gain,
+          });
+        }
+        deck.mainboard.sort();
+        deck.sideboard.sort();
+      }
+    }
+  }
+
+  return builtDecks;
 }

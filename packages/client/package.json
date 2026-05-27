@@ -63,7 +63,12 @@
     "test": "npx jest --coverage=false",
     "test:watch": "npx jest --watch --coverage=false",
     "test:coverage": "npx jest --coverage",
-    "test:ci": "npx jest --coverage --coverageReporters json-summary text"
+    "test:ci": "npx jest --coverage --coverageReporters json-summary text",
+    "deckbuild:eval": "npx ts-node -r tsconfig-paths/register --project tsconfig.json --compiler-options '{\"module\":\"commonjs\"}' scripts/runDeckbuildEval.ts",
+    "deckbuild:matrix": "npx ts-node -r tsconfig-paths/register --project tsconfig.json --compiler-options '{\"module\":\"commonjs\"}' scripts/runDeckbuildEvalMatrix.ts",
+    "deckbuild:corpus": "npx ts-node -r tsconfig-paths/register --project tsconfig.json --compiler-options '{\"module\":\"commonjs\"}' scripts/exportDeckbuildEvalCorpus.ts",
+    "deckbuild:audit": "npx ts-node -r tsconfig-paths/register --project tsconfig.json --compiler-options '{\"module\":\"commonjs\"}' scripts/auditDeckbuildMisses.ts",
+    "deckbuild:trace": "npx ts-node -r tsconfig-paths/register --project tsconfig.json --compiler-options '{\"module\":\"commonjs\"}' scripts/inspectHillclimbTrace.ts"
   },
   "eslintConfig": {
     "extends": [
