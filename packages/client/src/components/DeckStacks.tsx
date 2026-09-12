@@ -142,7 +142,11 @@ const DeckStacks: React.FC<DeckStacksProps> = ({ cards, title, subtitle, locatio
                       className="stacked"
                       key={`row-${index}-col-${index2}-card-${index3}-${card.cardID}`}
                       style={{
-                        transform: shift !== 0 ? `translateY(${shift * 10}%)` : undefined,
+                        // Open a clearly visible gap where the dragged card will
+                        // land, so cards slide out of the way as you rearrange
+                        // within a stack or drop in from another one. The
+                        // .stacked transition animates this smoothly.
+                        transform: shift !== 0 ? `translateY(${shift * 45}%)` : undefined,
                         opacity: isBeingDragged ? 0.3 : 1,
                       }}
                     >

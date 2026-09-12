@@ -1,7 +1,7 @@
 import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 import { DndContext } from '@dnd-kit/core';
-import { isVoucher, makeSubtitle } from '@utils/cardutil';
+import { isVoucher } from '@utils/cardutil';
 import Cube from '@utils/datatypes/Cube';
 import Draft from '@utils/datatypes/Draft';
 import { getCardDefaultRowColumn, getInitialState, setupPicks } from '@utils/draftutil';
@@ -10,9 +10,12 @@ import { Card, CardBody, CardHeader } from 'components/base/Card';
 import Container from 'components/base/Container';
 import Spinner from 'components/base/Spinner';
 import Text from 'components/base/Text';
-import DeckStacks from 'components/DeckStacks';
+import DraftField from 'components/draft/field/DraftField';
+import { FIELD_VIEW_META, FieldView, POOL_POSITION_META, PoolPosition } from 'components/draft/field/types';
+import DraftPackView from 'components/draft/DraftPackView';
+import DraftVariantSwitcher from 'components/draft/DraftVariantSwitcher';
+import { DRAFT_VARIANT_META, DraftVariant } from 'components/draft/variants/types';
 import P1P1FromPackGenerator from 'components/p1p1/P1P1FromPackGenerator';
-import Pack from 'components/Pack';
 import RenderToRoot from 'components/RenderToRoot';
 import { CSRFContext } from 'contexts/CSRFContext';
 import { DisplayContextProvider } from 'contexts/DisplayContext';
@@ -120,6 +123,9 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft }) => {
   const [currentPredictions, setCurrentPredictions] = useState<PredictResponse | null>(null);
   const [userPicksInOrder, setUserPicksInOrder] = useLocalStorage<number[]>(`picks-${draft.id}`, []); // Tracks the pick sequencing, managed separately from the mainboard/sideboard state
   const [pendingPick, setPendingPick] = useState<number | null>(null); // Add state to track the pending pick made during predictionsLoading
+  const [draftVariant, setDraftVariant] = useLocalStorage<DraftVariant>('draftUIVariant', 'classic'); // Slick draft UI style, live-switchable for demos
+  const [fieldView, setFieldView] = useLocalStorage<FieldView>('draftFieldView', 'stacks'); // How the drafted pool (mainboard/sideboard) is displayed
+  const [poolPosition, setPoolPosition] = useLocalStorage<PoolPosition>('draftPoolPosition', 'auto'); // Where the pool sits relative to the pack
 
   const { alerts, addAlert } = useAlerts();
 
@@ -875,87 +881,121 @@ const CubeDraftPage: React.FC<CubeDraftPageProps> = ({ cube, draft }) => {
   // can turn it into a shareable/votable P1P1 instead of screenshotting it.
   const isFirstPick = state.pack === 1 && state.pick === 1 && !draftStatus.loading;
 
+  // Guard against a stale variant persisted from a build that had different
+  // options (e.g. an old localStorage value), which would otherwise fail the
+  // component lookup.
+  const activeVariant: DraftVariant = DRAFT_VARIANT_META[draftVariant] ? draftVariant : 'classic';
+
+  // Arena-family variants put the draft pool on top with the splayed pack
+  // anchored below it; every other variant keeps the pack on top.
+  const poolOnTop = Boolean(DRAFT_VARIANT_META[activeVariant]?.poolOnTop);
+
+  const activeFieldView: FieldView = FIELD_VIEW_META[fieldView] ? fieldView : 'stacks';
+
+  const activePoolPosition: PoolPosition = POOL_POSITION_META[poolPosition] ? poolPosition : 'auto';
+  // 'auto' defers to the variant (Arena wants the pool on top); otherwise the
+  // chosen position wins for any variant.
+  const effectivePoolPosition = activePoolPosition === 'auto' ? (poolOnTop ? 'top' : 'bottom') : activePoolPosition;
+
+  const fieldNode = <DraftField view={activeFieldView} mainboard={mainboardCards} sideboard={sideboardCards} />;
+
+  const packSection = (
+    <>
+      {/* Only show the pack if there are actually cards to show */}
+      {state?.seats?.[0]?.pack?.length > 0 ? (
+        draftStatus.predictionsLoading && pendingPick !== null ? (
+          <Card className="mt-3">
+            <CardHeader className="flex justify-between items-center">
+              <Text semibold lg>
+                Waiting for Bot Picks...
+              </Text>
+            </CardHeader>
+            <CardBody>
+              <div className="centered py-3">
+                <div className="spinner" />
+              </div>
+            </CardBody>
+          </Card>
+        ) : (
+          <DraftPackView
+            variant={activeVariant}
+            // Just use state.seats[0].pack directly
+            pack={state.seats[0].pack.map((index) => draft.cards[index])}
+            loading={draftStatus.loading}
+            title={packTitle}
+            disabled={packDisabled || draftStatus.retryInProgress}
+            ratings={ratings}
+            error={draftStatus.predictError}
+            onRetry={handleRetryPredict}
+            retryInProgress={draftStatus.retryInProgress}
+            isTrashStep={state.stepQueue[0]?.action === 'trash'}
+            onPick={clickPickCard}
+            onTrash={clickTrashPick}
+            headerActions={
+              isFirstPick ? (
+                <P1P1FromPackGenerator
+                  cubeId={cube.id}
+                  seed={draft.id}
+                  pack={state.seats[0].pack.map((index) => draft.cards[index])}
+                  label="Share as P1P1"
+                  openInNewTab
+                />
+              ) : undefined
+            }
+          />
+        )
+      ) : draftStatus.loading || draftStatus.draftCompleted ? (
+        <Card className="mt-3">
+          <CardHeader>
+            <Text semibold lg>
+              Finishing draft...
+            </Text>
+          </CardHeader>
+          <CardBody>
+            <div className="flex justify-center py-3">
+              <Spinner md />
+            </div>
+          </CardBody>
+        </Card>
+      ) : (
+        <></>
+      )}
+    </>
+  );
+
   return (
     <MainLayout useContainer={false}>
       <DisplayContextProvider cubeID={cube.id}>
         <CubeLayout cube={cube} activeLink="playtest">
           <Container xl disableCenter>
             <Alerts alerts={alerts} />
+            <DraftVariantSwitcher
+              variant={activeVariant}
+              setVariant={setDraftVariant}
+              fieldView={activeFieldView}
+              setFieldView={setFieldView}
+              poolPosition={activePoolPosition}
+              setPoolPosition={setPoolPosition}
+            />
             <DndContext onDragEnd={onMoveCard} onDragStart={() => setDragStartTime(Date.now())}>
               <div className="relative">
-                {/* Only show the pack if there are actually cards to show */}
-                {state?.seats?.[0]?.pack?.length > 0 ? (
-                  draftStatus.predictionsLoading && pendingPick !== null ? (
-                    <Card className="mt-3">
-                      <CardHeader className="flex justify-between items-center">
-                        <Text semibold lg>
-                          Waiting for Bot Picks...
-                        </Text>
-                      </CardHeader>
-                      <CardBody>
-                        <div className="centered py-3">
-                          <div className="spinner" />
-                        </div>
-                      </CardBody>
-                    </Card>
-                  ) : (
-                    <Pack
-                      // Just use state.seats[0].pack directly
-                      pack={state.seats[0].pack.map((index) => draft.cards[index])}
-                      packSize={state.seats[0].pack.length}
-                      loading={draftStatus.loading}
-                      title={packTitle}
-                      disabled={packDisabled || draftStatus.retryInProgress}
-                      ratings={ratings}
-                      error={draftStatus.predictError}
-                      onRetry={handleRetryPredict}
-                      retryInProgress={draftStatus.retryInProgress}
-                      headerActions={
-                        isFirstPick ? (
-                          <P1P1FromPackGenerator
-                            cubeId={cube.id}
-                            seed={draft.id}
-                            pack={state.seats[0].pack.map((index) => draft.cards[index])}
-                            label="Share as P1P1"
-                            openInNewTab
-                          />
-                        ) : undefined
-                      }
-                    />
-                  )
-                ) : draftStatus.loading || draftStatus.draftCompleted ? (
-                  <Card className="mt-3">
-                    <CardHeader>
-                      <Text semibold lg>
-                        Finishing draft...
-                      </Text>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="flex justify-center py-3">
-                        <Spinner md />
-                      </div>
-                    </CardBody>
-                  </Card>
+                {effectivePoolPosition === 'right' ? (
+                  // Pool beside the pack (stacks below the pack on small screens).
+                  <div className="flex flex-col lg:flex-row gap-3">
+                    <div className="flex-1 min-w-0">{packSection}</div>
+                    <div className="w-full lg:w-[26rem] shrink-0">{fieldNode}</div>
+                  </div>
+                ) : effectivePoolPosition === 'top' ? (
+                  <>
+                    {fieldNode}
+                    {packSection}
+                  </>
                 ) : (
-                  <></>
+                  <>
+                    {packSection}
+                    {fieldNode}
+                  </>
                 )}
-                <Card className="my-3">
-                  <DeckStacks
-                    cards={mainboardCards}
-                    title="Mainboard"
-                    subtitle={makeSubtitle(mainboard.flat(3).map((index) => draft.cards[index]))}
-                    locationType={locations.deck}
-                    xs={4}
-                    lg={8}
-                  />
-                  <DeckStacks
-                    cards={sideboardCards}
-                    title="Sideboard"
-                    locationType={locations.sideboard}
-                    xs={4}
-                    lg={8}
-                  />
-                </Card>
               </div>
             </DndContext>
           </Container>
